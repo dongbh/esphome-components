@@ -1,22 +1,21 @@
-from esphome import automation
+from esphome import pins
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import automation
 from esphome.components import uart
 from esphome.const import CONF_ID, CONF_PORT, CONF_BUFFER_SIZE
 
 # ESPHome doesn't know the Stream abstraction yet, so hardcode to use a UART for now.
+stream_server_ns = cg.esphome_ns.namespace("stream_server")
+StreamServerComponent = stream_server_ns.class_("StreamServerComponent", cg.Component)
+PauseAction = stream_server_ns.class_("PauseAction", automation.Action)
+ResumeAction = stream_server_ns.class_("ResumeAction", automation.Action)
 
 AUTO_LOAD = ["socket"]
 
 DEPENDENCIES = ["uart", "network"]
 
 MULTI_CONF = True
-
-ns = cg.global_ns
-StreamServerComponent = ns.class_("StreamServerComponent", cg.Component)
-PauseAction = ns.class_("PauseAction", automation.Action)
-ResumeAction = ns.class_("ResumeAction", automation.Action)
-
 
 def validate_buffer_size(buffer_size):
     if buffer_size & (buffer_size - 1) != 0:
@@ -33,7 +32,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BUFFER_SIZE, default=128): cv.All(
                 cv.positive_int, validate_buffer_size
             ),
-            cv.Optional("trace", default=False): cv.boolean,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -45,12 +43,9 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     cg.add(var.set_port(config[CONF_PORT]))
     cg.add(var.set_buffer_size(config[CONF_BUFFER_SIZE]))
-    if "trace" in config:
-        cg.add(var.set_trace(config["trace"]))
 
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
-
 
 @automation.register_action(
     "stream_server.pause",
@@ -70,3 +65,4 @@ async def stream_server_pause_to_code(config, action_id, template_arg, args):
 async def stream_server_resume_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
+
