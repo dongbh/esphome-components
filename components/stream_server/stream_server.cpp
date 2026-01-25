@@ -72,7 +72,10 @@ void StreamServerComponent::accept() {
 
     this->client_socket = std::move(socket);
     this->client_socket->setblocking(false);
-    identifier = this->client_socket->getpeername();
+    //identifier = this->client_socket->getpeername();
+    char peername[esphome::socket::SOCKADDR_STR_LEN];
+    this->client_socket->getpeername_to(peername);
+    identifier = peername;
     ESP_LOGD(TAG, "New client connected from %s", identifier.c_str());
     this->publish_sensor();
 }
