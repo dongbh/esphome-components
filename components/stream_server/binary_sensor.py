@@ -5,13 +5,7 @@ from esphome.const import (
     DEVICE_CLASS_CONNECTIVITY,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
-
-
-#from . import ns, StreamServerComponent
-
-stream_server_ns = cg.esphome_ns.namespace("stream_server")
-StreamServerComponent = stream_server_ns.class_("StreamServerComponent", cg.Component)
-
+from . import ns, StreamServerComponent
 
 CONF_CONNECTED = "connected"
 CONF_STREAM_SERVER = "stream_server"

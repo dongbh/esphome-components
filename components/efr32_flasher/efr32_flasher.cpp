@@ -16,8 +16,6 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/md5/md5.h"
 
-#include "esphome/components/uart/uart_component_esp_idf.h"
-#include "driver/uart.h"
 #include <ArduinoJson.h>
 
 #include "esp_http_client.h"
@@ -31,6 +29,102 @@ namespace esphome {
 namespace efr32_flasher {
 
 static const char* const TAG = "efr32_flasher";
+
+static bool ends_with_ignore_query_(const std::string& s, const char* suffix) {
+    size_t end = s.find_first_of("?#");
+    if (end == std::string::npos)
+        end = s.size();
+    size_t n = std::strlen(suffix);
+    if (end < n)
+        return false;
+    return strncasecmp(s.c_str() + end - n, suffix, n) == 0;
+}
+
+static bool is_http_redirect_(int status) {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+static std::string resolve_redirect_url_(const std::string& base, const char* location) {
+    if (location == nullptr || *location == '\0')
+        return "";
+
+    std::string loc(location);
+    if (loc.rfind("http://", 0) == 0 || loc.rfind("https://", 0) == 0)
+        return loc;
+
+    size_t scheme_end = base.find("://");
+    if (scheme_end == std::string::npos)
+        return loc;
+
+    std::string scheme = base.substr(0, scheme_end);
+    size_t host_start = scheme_end + 3;
+    size_t path_start = base.find('/', host_start);
+    std::string origin = path_start == std::string::npos ? base : base.substr(0, path_start);
+
+    if (loc.rfind("//", 0) == 0)
+        return scheme + ":" + loc;
+    if (loc[0] == '/')
+        return origin + loc;
+
+    std::string dir = path_start == std::string::npos ? origin + "/" : base.substr(0, base.rfind('/') + 1);
+    return dir + loc;
+}
+
+static std::string get_redirect_location_(esp_http_client_handle_t client, const std::string& base) {
+    const char* names[] = { "Location", "location", "LOCATION" };
+    for (const char* name : names) {
+        char* loc = nullptr;
+        if (esp_http_client_get_header(client, name, &loc) == ESP_OK && loc != nullptr && *loc != '\0')
+            return resolve_redirect_url_(base, loc);
+    }
+    return "";
+}
+
+static void replace_all_(std::string& text, const char* from, const char* to) {
+    size_t pos = 0;
+    size_t from_len = strlen(from);
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+        text.replace(pos, from_len, to);
+        pos += strlen(to);
+    }
+}
+
+static std::string extract_redirect_href_(const std::string& base, const std::string& body) {
+    size_t href = body.find("href=");
+    if (href == std::string::npos)
+        return "";
+
+    size_t value = href + 5;
+    while (value < body.size() && std::isspace(static_cast<unsigned char>(body[value])))
+        value++;
+    if (value >= body.size())
+        return "";
+
+    char quote = body[value];
+    size_t start = value;
+    size_t end = std::string::npos;
+    if (quote == '"' || quote == '\'') {
+        start++;
+        end = body.find(quote, start);
+    } else {
+        while (start < body.size() && std::isspace(static_cast<unsigned char>(body[start])))
+            start++;
+        end = body.find_first_of(" \t\r\n>", start);
+    }
+    if (end == std::string::npos || end <= start)
+        return "";
+
+    std::string loc = body.substr(start, end - start);
+    replace_all_(loc, "&amp;", "&");
+    return resolve_redirect_url_(base, loc.c_str());
+}
+
+static const char* header_or_none_(esp_http_client_handle_t client, const char* name) {
+    char* value = nullptr;
+    if (esp_http_client_get_header(client, name, &value) == ESP_OK && value != nullptr && *value != '\0')
+        return value;
+    return "<none>";
+}
 
 // Forward declarations for ASH helpers
 void write_escaped_(esphome::uart::UARTComponent* uart, const uint8_t* data, size_t len);
@@ -49,15 +143,6 @@ static constexpr uint8_t ACK = 0x06;
 static constexpr uint8_t NAK = 0x15;
 static constexpr uint8_t CAN = 0x18;
 static constexpr uint8_t CCHR = 'C';
-
-// HTTP event handler to accumulate body during esp_http_client_perform()
-static esp_err_t http_event_handler(esp_http_client_event_t* evt) {
-    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->user_data && evt->data && evt->data_len > 0) {
-        auto* body = reinterpret_cast<std::string*>(evt->user_data);
-        body->append(reinterpret_cast<const char*>(evt->data), evt->data_len);
-    }
-    return ESP_OK;
-}
 
 EFR32Flasher::~EFR32Flasher() {}
 
@@ -84,14 +169,8 @@ void EFR32Flasher::set_uart_baud_(uint32_t baud) {
 #if defined(USE_ESP8266) || defined(USE_ESP32)
     this->uart_->load_settings(false);
 #endif
-#ifdef USE_ESP_IDFNNNNNN
-    if (this->uart_ != nullptr) {
-        auto* idf_uart = static_cast<esphome::uart::IDFUARTComponent*>(this->uart_);
-        uart_port_t port = static_cast<uart_port_t>(idf_uart->get_hw_serial_number());
-        uart_set_pin(port, 4, 36, 2, 13);
-        uart_set_hw_flow_ctrl(port, UART_HW_FLOWCTRL_CTS_RTS, 122);
-    }
-#endif
+    if (this->uart_hw_flow_ != nullptr)
+        this->uart_hw_flow_->apply();
     // Give the hardware a moment to settle at the new rate.
     delay_(100);
     uint32_t reported = this->uart_->get_baud_rate();
@@ -166,32 +245,54 @@ void EFR32Flasher::flush_uart_() {
 bool EFR32Flasher::http_open_(const std::string& url, esp_http_client_handle_t& client, int timeout_ms) {
     std::string cur = url;
     for (int redirects = 0; redirects < 5; redirects++) {
+        ESP_LOGD(TAG, "HTTP open attempt %d: %s", redirects + 1, cur.c_str());
         esp_http_client_config_t cfg = {};
         cfg.url = cur.c_str();
         cfg.timeout_ms = timeout_ms;
         cfg.crt_bundle_attach = esp_crt_bundle_attach;
         cfg.disable_auto_redirect = true; // handle redirects manually for reliability
+        cfg.buffer_size = 4096;
+        cfg.buffer_size_tx = 1024;
         client = esp_http_client_init(&cfg);
-        if (!client)
+        if (!client) {
+            ESP_LOGE(TAG, "HTTP client init failed: %s", cur.c_str());
             return false;
-        if (esp_http_client_open(client, 0) != ESP_OK) {
+        }
+        esp_err_t open_err = esp_http_client_open(client, 0);
+        if (open_err != ESP_OK) {
+            ESP_LOGE(TAG, "HTTP open failed: %s url=%s", esp_err_to_name(open_err), cur.c_str());
             esp_http_client_cleanup(client);
             return false;
         }
 
-        (void)esp_http_client_fetch_headers(client);
+        int64_t header_len = esp_http_client_fetch_headers(client);
+        if (header_len < 0)
+            ESP_LOGW(TAG, "HTTP fetch headers failed: %lld url=%s", (long long)header_len, cur.c_str());
         int status = esp_http_client_get_status_code(client);
+        int64_t content_len = esp_http_client_get_content_length(client);
+        ESP_LOGD(TAG, "HTTP response status=%d header_len=%lld content_len=%lld type=%s",
+            status, (long long)header_len, (long long)content_len, header_or_none_(client, "Content-Type"));
         if (status == 200) {
             return true;
         }
-        if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
-            // Try to follow Location header
-            char* loc = nullptr;
-            esp_http_client_get_header(client, "Location", &loc);
-            ESP_LOGW(TAG, "HTTP redirect %d to: %s", status, (loc && *loc) ? loc : "<none>");
-            esp_http_client_close(client); esp_http_client_cleanup(client);
-            if (loc && *loc) {
-                cur = loc;
+        if (is_http_redirect_(status)) {
+            std::string next = get_redirect_location_(client, cur);
+            ESP_LOGW(TAG, "HTTP redirect %d to: %s", status, !next.empty() ? next.c_str() : "<none>");
+            if (next.empty()) {
+                char first[512];
+                int n = esp_http_client_read(client, first, sizeof(first));
+                ESP_LOGW(TAG, "HTTP redirect body read returned %d", n);
+                if (n > 0) {
+                    ESP_LOGW(TAG, "HTTP redirect body first bytes: %.*s", n, first);
+                    std::string redirect_body(first, n);
+                    next = extract_redirect_href_(cur, redirect_body);
+                    ESP_LOGW(TAG, "HTTP redirect href fallback to: %s", !next.empty() ? next.c_str() : "<none>");
+                }
+            }
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            if (!next.empty()) {
+                cur = next;
                 continue;
             }
             return false;
@@ -208,27 +309,40 @@ bool EFR32Flasher::http_open_(const std::string& url, esp_http_client_handle_t& 
 }
 
 bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_out) {
-    ESP_LOGI(TAG, "fetch_manifest: url=%s", url.c_str());
-    // Use perform API to follow redirects automatically and accumulate full body
-    std::string body; body.reserve(1024);
-    esp_http_client_config_t cfg = {};
-    cfg.url = url.c_str();
-    cfg.timeout_ms = 15000;
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.disable_auto_redirect = false; // allow IDF to follow redirects
-    cfg.event_handler = http_event_handler;
-    cfg.user_data = &body;
-
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client)
+    if (ends_with_ignore_query_(url, ".gbl")) {
+        fw_url_out = url;
+        ESP_LOGI(TAG, "Direct GBL URL configured; skipping manifest fetch");
+        return true;
+    }
+    if (ends_with_ignore_query_(url, ".hex") || ends_with_ignore_query_(url, ".bin")) {
+        ESP_LOGE(TAG, "HEX/BIN firmware is for CC2652, not EFR32. Use a .gbl file.");
         return false;
-    esp_err_t perr = esp_http_client_perform(client);
-    int status = esp_http_client_get_status_code(client);
-    if (perr != ESP_OK || status != 200) {
-        ESP_LOGE(TAG, "Manifest HTTP perform failed: %s status=%d", esp_err_to_name(perr), status);
+    }
+    ESP_LOGI(TAG, "fetch_manifest: url=%s", url.c_str());
+    std::string body; body.reserve(2048);
+
+    esp_http_client_handle_t client = nullptr;
+    if (!http_open_(url, client, 15000)) {
+        ESP_LOGE(TAG, "Manifest HTTP open failed");
+        return false;
+    }
+
+    char buf[512];
+    while (true) {
+        int n = esp_http_client_read(client, buf, sizeof(buf));
+        if (n > 0) {
+            body.append(buf, n);
+            App.feed_wdt();
+            continue;
+        }
+        if (n == 0)
+            break;
+        ESP_LOGE(TAG, "Manifest HTTP read failed: %d", n);
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return false;
     }
+    esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
     JsonDocument doc;
@@ -264,6 +378,8 @@ bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_o
                     expected_md5_ = v["md5"].as<const char*>();
                 if (v["size"].is<uint32_t>())
                     expected_size_ = v["size"].as<uint32_t>();
+                if (v["version"].is<const char*>())
+                    manifest_version_ = v["version"].as<const char*>();
                 ESP_LOGI(TAG, "Manifest variant '%s' selected", key.c_str());
             } else {
                 ESP_LOGW(TAG, "Manifest does not provide variant '%s'", key.c_str());
@@ -301,7 +417,7 @@ bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_o
     if (!expected_size_ && doc["size"].is<uint32_t>())
         expected_size_ = doc["size"].as<uint32_t>();
 */
-    if (doc["version"].is<const char*>())
+    if (manifest_version_.empty() && doc["version"].is<const char*>())
         manifest_version_ = doc["version"].as<const char*>();
 
     if (fw_url_out.empty()) {
@@ -531,11 +647,16 @@ void EFR32Flasher::run_update_() {
     ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
     set_busy_(true);
     std::string fw_url;
-    if (!fetch_manifest_(manifest_url_, fw_url)) {
-        ESP_LOGE(TAG, "Manifest fetch/parse failed");
-        set_busy_(false); return;
+    if (ends_with_ignore_query_(manifest_url_, ".gbl")) {
+        fw_url = manifest_url_;
+        ESP_LOGI(TAG, "Using direct firmware URL (no manifest): %s", fw_url.c_str());
+    } else {
+        if (!fetch_manifest_(manifest_url_, fw_url)) {
+            ESP_LOGE(TAG, "Manifest fetch/parse failed");
+            set_busy_(false); return;
+        }
+        ESP_LOGI(TAG, "Firmware: %s", fw_url.c_str());
     }
-    ESP_LOGI(TAG, "Firmware: %s", fw_url.c_str());
 
     esp_http_client_handle_t client;
     if (!http_open_(fw_url, client)) {
@@ -544,7 +665,19 @@ void EFR32Flasher::run_update_() {
         return;
     }
     int64_t len64 = esp_http_client_get_content_length(client);
-    uint32_t content_len = len64 > 0 ? (uint32_t)len64 : 0;
+    uint32_t content_len = 0;
+    if (len64 > 0) {
+        content_len = (uint32_t)len64;
+    } else if (expected_size_ > 0) {
+        content_len = expected_size_;
+        ESP_LOGW(TAG, "Firmware HTTP content length unavailable; using manifest size=%u", (unsigned)content_len);
+    } else {
+        ESP_LOGE(TAG, "Firmware HTTP content length unavailable and manifest size is missing");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        set_busy_(false);
+        return;
+    }
 
     apply_bootloader_baud_();
     enter_bootloader_();
@@ -584,6 +717,14 @@ void EFR32Flasher::run_update_() {
 void EFR32Flasher::run_check_update_() {
     apply_runtime_baud_();
     ESP_LOGI(TAG, "Checking EFR32 firmware manifest…");
+    if (manifest_url_.empty()) {
+        ESP_LOGW(TAG, "No manifest URL configured; skipping update check.");
+        return;
+    }
+    if (ends_with_ignore_query_(manifest_url_, ".gbl")) {
+        ESP_LOGW(TAG, "Custom firmware URL configured; skipping manifest update check.");
+        return;
+    }
     if (variant_force_ == 0 && variant_key_override_.empty()) {
         variant_key_override_ = detect_variant_key_();
         if (variant_key_override_.empty()) {

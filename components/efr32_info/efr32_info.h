@@ -23,7 +23,7 @@ public:
         ash_state_.last_rx_seq = 7;
         host_rx_seq_ = 0;
     }
-    void set_stream_server(esphome::stream_server::StreamServerComponent* srv) { stream_server_ = srv; }
+    void set_stream_server(::StreamServerComponent* srv) { stream_server_ = srv; }
     void set_busy_sensor(esphome::binary_sensor::BinarySensor* sensor) { busy_sensor_ = sensor; }
     void set_status_sensor(esphome::text_sensor::TextSensor* sensor) { status_sensor_ = sensor; }
     void set_ezsp_version_sensor(esphome::text_sensor::TextSensor* sensor) { ezsp_version_sensor_ = sensor; }
@@ -75,7 +75,7 @@ private:
     static std::string extract_ascii_(const std::vector<uint8_t>& data);
 
     esphome::uart::UARTComponent* uart_{ nullptr };
-    esphome::stream_server::StreamServerComponent* stream_server_{ nullptr };
+    ::StreamServerComponent* stream_server_{ nullptr };
     esphome::binary_sensor::BinarySensor* busy_sensor_{ nullptr };
 
     esphome::text_sensor::TextSensor* status_sensor_{ nullptr };

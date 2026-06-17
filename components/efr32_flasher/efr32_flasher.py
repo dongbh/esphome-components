@@ -4,8 +4,13 @@ from esphome.components import uart, switch as switch_, text_sensor, binary_sens
 from esphome.const import CONF_ID, CONF_URL
 from esphome.automation import register_action
 
+try:
+    from esphome.components import uart_hw_flow
+except ImportError:
+    uart_hw_flow = None
+
 DEPENDENCIES = ["uart", "switch"]
-AUTO_LOAD = ["md5", "json"]
+AUTO_LOAD = ["md5", "json", "uart_hw_flow"]
 
 CONF_BL_SWITCH = "boot_switch"
 CONF_RST_SWITCH = "rst_switch"
@@ -26,12 +31,19 @@ CONF_BAUD_RATE = "baud_rate"
 CONF_BOOT_BAUD_RATE = "bootloader_baud_rate"
 CONF_VARIANT = "variant"
 CONF_BUSY_BINARY_SENSOR = "busy_binary_sensor"
+CONF_UART_HW_FLOW_ID = "uart_hw_flow_id"
 efr32_ns = cg.esphome_ns.namespace("efr32_flasher")
 EFR32Flasher = efr32_ns.class_("EFR32Flasher", cg.Component)
 UpdateFirmwareAction = efr32_ns.class_("UpdateFirmwareAction")
 CheckUpdateAction = efr32_ns.class_("CheckUpdateAction")
 
 CONF_PAUSE_SWITCH = "pause_switch"
+
+
+def _maybe_uart_hw_flow_use_id(value):
+    if uart_hw_flow is None:
+        raise cv.Invalid("uart_hw_flow component not available")
+    return cv.use_id(uart_hw_flow.UARTHwFlowComponent)(value)
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -57,6 +69,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BOOT_BAUD_RATE, default=115200): cv.int_range(min=9600, max=921600),
         cv.Optional(CONF_PAUSE_SWITCH): cv.use_id(switch_.Switch),
         cv.Optional(CONF_BUSY_BINARY_SENSOR): cv.use_id(binary_sensor.BinarySensor),
+        cv.Optional(CONF_UART_HW_FLOW_ID): _maybe_uart_hw_flow_use_id,
         # variant: auto | MGM24 | BM24 (case-insensitive)
         cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "mgm24", "bm24", lower=True),
     }
@@ -95,6 +108,9 @@ async def to_code(config):
     cg.add(var.set_uart(uart_comp))
     cg.add(var.set_bl_switch(bl))
     cg.add(var.set_rst_switch(rst))
+    if CONF_UART_HW_FLOW_ID in config:
+        flow = await cg.get_variable(config[CONF_UART_HW_FLOW_ID])
+        cg.add(var.set_uart_hw_flow(flow))
     if config[CONF_BAUD_RATE] > 0:
         cg.add(var.set_runtime_baud_rate(config[CONF_BAUD_RATE]))
     if CONF_BOOT_BAUD_RATE in config:

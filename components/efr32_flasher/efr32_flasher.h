@@ -15,6 +15,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/md5/md5.h"
+#include "esphome/components/uart_hw_flow/uart_hw_flow.h"
 
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -29,6 +30,7 @@ class EFR32Flasher : public Component {
 public:
     ~EFR32Flasher();
     void set_uart(esphome::uart::UARTComponent* u) { uart_ = u; }
+    void set_uart_hw_flow(esphome::uart_hw_flow::UARTHwFlowComponent* flow) { uart_hw_flow_ = flow; }
     void set_bl_switch(esphome::switch_::Switch* s) { bl_sw_ = s; }
     void set_rst_switch(esphome::switch_::Switch* s) { rst_sw_ = s; }
     void set_pause_switch(esphome::switch_::Switch* s) { pause_sw_ = s; }
@@ -99,6 +101,7 @@ private:
 
     // State
     esphome::uart::UARTComponent* uart_{ nullptr };
+    esphome::uart_hw_flow::UARTHwFlowComponent* uart_hw_flow_{ nullptr };
     esphome::switch_::Switch* bl_sw_{ nullptr };
     esphome::switch_::Switch* rst_sw_{ nullptr };
     esphome::switch_::Switch* pause_sw_{ nullptr };
