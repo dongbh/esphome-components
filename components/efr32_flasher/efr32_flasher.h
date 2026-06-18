@@ -18,7 +18,6 @@
 #include "esphome/components/uart_hw_flow/uart_hw_flow.h"
 
 #include "esp_http_client.h"
-#include "esp_crt_bundle.h"
 
 #ifndef USE_ESP_IDF
 #error "EFR32 flasher requires ESP-IDF framework."

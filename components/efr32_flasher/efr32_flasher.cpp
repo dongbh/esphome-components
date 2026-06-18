@@ -19,7 +19,12 @@
 #include <ArduinoJson.h>
 
 #include "esp_http_client.h"
+#if __has_include("esp_crt_bundle.h")
 #include "esp_crt_bundle.h"
+#define EFR32_FLASHER_HAS_CRT_BUNDLE 1
+#else
+#define EFR32_FLASHER_HAS_CRT_BUNDLE 0
+#endif
 
 #ifndef USE_ESP_IDF
 #error "EFR32 flasher requires ESP-IDF framework."
@@ -249,7 +254,9 @@ bool EFR32Flasher::http_open_(const std::string& url, esp_http_client_handle_t& 
         esp_http_client_config_t cfg = {};
         cfg.url = cur.c_str();
         cfg.timeout_ms = timeout_ms;
+#if EFR32_FLASHER_HAS_CRT_BUNDLE
         cfg.crt_bundle_attach = esp_crt_bundle_attach;
+#endif
         cfg.disable_auto_redirect = true; // handle redirects manually for reliability
         cfg.buffer_size = 4096;
         cfg.buffer_size_tx = 1024;
@@ -707,6 +714,14 @@ void EFR32Flasher::run_update_() {
             ESP_LOGI(TAG, "NCP start marker {~ detected.");
         } else {
             ESP_LOGW(TAG, "No NCP start marker seen in 1.5s (firmware may still boot later).");
+        }
+        if (!manifest_version_.empty()) {
+            if (fw_text_ != nullptr) {
+                fw_text_->publish_state(manifest_version_.c_str());
+                ESP_LOGI(TAG, "Published installed EFR32 firmware version: %s", manifest_version_.c_str());
+            }
+            if (latest_text_ != nullptr)
+                latest_text_->publish_state(manifest_version_.c_str());
         }
     } else {
         ESP_LOGE(TAG, "EFR32 update failed");
