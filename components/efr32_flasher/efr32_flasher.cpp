@@ -541,62 +541,75 @@ bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t conten
     }
 
     while (sent < content_len) {
-        // Fill a 128-byte payload from network
-        size_t need = 128; size_t off = 0;
-        while (off < need) {
-            int r = esp_http_client_read(client, (char*)net_buf.data(), std::min((size_t)net_buf.size(), need - off));
-            if (r < 0)
+        const size_t payload_len = std::min<size_t>(128, content_len - sent);
+        size_t off = 0;
+        std::fill(block.begin(), block.end(), 0x1A);
+
+        while (off < payload_len) {
+            int r = esp_http_client_read(client, (char*)net_buf.data(),
+                std::min((size_t)net_buf.size(), payload_len - off));
+            if (r < 0) {
+                ESP_LOGE(TAG, "Firmware HTTP read failed while filling block %u: %d", (unsigned)seq, r);
+                uart_->write_byte(CAN);
                 return false;
-            if (r == 0)
-                break; // EOF
+            }
+            if (r == 0) {
+                ESP_LOGE(TAG, "Firmware HTTP ended early at %u/%u bytes", (unsigned)(sent + off),
+                    (unsigned)content_len);
+                uart_->write_byte(CAN);
+                return false;
+            }
             std::memcpy(block.data() + off, net_buf.data(), r);
             off += r;
-            sent += r;
             App.feed_wdt();
         }
-        if (off == 0)
-            break; // no more data
-        if (off < 128) {
-            std::fill(block.begin() + off, block.end(), 0x1A);
-        }
 
-        // Build and send XMODEM frame
         uint8_t hdr[3] = { SOH, seq, (uint8_t)(0xFF - seq) };
         uint16_t crc = crc16_ccitt_(block.data(), 128);
-
-        uart_->write_array(hdr, 3);
-        uart_->write_array(block.data(), 128);
         uint8_t crc_be[2] = { (uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF) };
-        uart_->write_array(crc_be, 2);
 
-        // Await ACK/NAK
-        uint8_t resp = 0;
-        uint32_t wait_ms = 3000;
-        uint32_t start = millis();
         bool ok = false;
-        while (millis() - start < wait_ms) {
-            if (read_byte_(resp, 250)) {
-                if (resp == ACK) {
-                    ok = true;
-                    break;
-                }
-                if (resp == NAK) {
-                    ok = false;
-                    break;
-                }
-                if (resp == CAN) {
-                    ESP_LOGE(TAG, "Receiver cancelled (CAN)");
-                    return false;
+        static constexpr uint8_t MAX_RETRIES = 10;
+        for (uint8_t attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            uart_->write_array(hdr, 3);
+            uart_->write_array(block.data(), 128);
+            uart_->write_array(crc_be, 2);
+
+            uint8_t resp = 0;
+            uint32_t start = millis();
+            while (millis() - start < 3000) {
+                if (read_byte_(resp, 250)) {
+                    if (resp == ACK) {
+                        ok = true;
+                        break;
+                    }
+                    if (resp == NAK) {
+                        ESP_LOGW(TAG, "NAK on block %u attempt %u/%u", (unsigned)seq, (unsigned)attempt,
+                            (unsigned)MAX_RETRIES);
+                        break;
+                    }
+                    if (resp == CAN) {
+                        ESP_LOGE(TAG, "Receiver cancelled (CAN)");
+                        return false;
+                    }
                 }
             }
+            if (ok)
+                break;
+            if (resp != NAK) {
+                ESP_LOGW(TAG, "Timeout on block %u attempt %u/%u", (unsigned)seq, (unsigned)attempt,
+                    (unsigned)MAX_RETRIES);
+            }
+            App.feed_wdt();
         }
         if (!ok) {
-            ESP_LOGW(TAG, "NAK or timeout on block %u, retrying…", (unsigned)seq);
-            continue;
+            ESP_LOGE(TAG, "Block %u failed after retries; cancelling XMODEM", (unsigned)seq);
+            uart_->write_byte(CAN);
+            return false;
         }
-        // Update MD5 only for the actual payload size read from network (exclude padding)
-        if (off > 0)
-            md5.add(block.data(), off);
+
+        md5.add(block.data(), payload_len);
+        sent += payload_len;
         seq++;
         update_progress_(sent, content_len, last_pc);
     }
