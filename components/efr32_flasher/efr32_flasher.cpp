@@ -19,6 +19,7 @@
 #include <ArduinoJson.h>
 
 #include "esp_http_client.h"
+#include "esp_partition.h"
 #if __has_include("esp_crt_bundle.h")
 #include "esp_crt_bundle.h"
 #define EFR32_FLASHER_HAS_CRT_BUNDLE 1
@@ -148,6 +149,7 @@ static constexpr uint8_t ACK = 0x06;
 static constexpr uint8_t NAK = 0x15;
 static constexpr uint8_t CAN = 0x18;
 static constexpr uint8_t CCHR = 'C';
+static constexpr const char* EFR32_FW_PARTITION_LABEL = "efr32_fw";
 
 EFR32Flasher::~EFR32Flasher() {}
 
@@ -445,7 +447,7 @@ bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_o
 void EFR32Flasher::enter_bootloader_() {
     if (!bl_sw_ || !rst_sw_)
         return;
-    ESP_LOGI(TAG, "Entering Gecko bootloader (BL+RST)…");
+    ESP_LOGI(TAG, "Entering Gecko bootloader (BL+RST)...");
     // Mirror the proven sequence used in your YAML script:
     // 1) Assert boot pin
     // 2) Hold ~1s, then assert reset for ~1s
@@ -466,15 +468,125 @@ void EFR32Flasher::enter_bootloader_() {
 void EFR32Flasher::leave_bootloader_() {
     if (!rst_sw_)
         return;
-    ESP_LOGD(TAG, "Exiting bootloader via reset…");
+    ESP_LOGD(TAG, "Exiting bootloader via reset...");
     rst_sw_->turn_on();
     delay_(15);
     rst_sw_->turn_off();
 }
 
-bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t content_len) {
+bool EFR32Flasher::download_firmware_(const std::string& url, uint32_t& content_len_out) {
+    content_len_out = 0;
+    if (expected_md5_.size() != 32) {
+        ESP_LOGE(TAG, "Manifest MD5 is required before flashing EFR32");
+        return false;
+    }
+
+    const esp_partition_t* partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+        ESP_PARTITION_SUBTYPE_ANY, EFR32_FW_PARTITION_LABEL);
+    if (partition == nullptr) {
+        ESP_LOGE(TAG, "EFR32 firmware cache partition '%s' not found", EFR32_FW_PARTITION_LABEL);
+        return false;
+    }
+    ESP_LOGI(TAG, "EFR32 firmware cache partition '%s': offset=0x%06X size=%u", EFR32_FW_PARTITION_LABEL,
+        (unsigned)partition->address, (unsigned)partition->size);
+
+    esp_http_client_handle_t client = nullptr;
+    if (!http_open_(url, client)) {
+        ESP_LOGE(TAG, "Firmware HTTP open failed");
+        return false;
+    }
+
+    int64_t len64 = esp_http_client_get_content_length(client);
+    uint32_t content_len = 0;
+    if (len64 > 0) {
+        content_len = (uint32_t)len64;
+        if (expected_size_ > 0 && expected_size_ != content_len) {
+            ESP_LOGE(TAG, "Firmware size mismatch: manifest=%u http=%u", (unsigned)expected_size_,
+                (unsigned)content_len);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return false;
+        }
+    } else if (expected_size_ > 0) {
+        content_len = expected_size_;
+        ESP_LOGW(TAG, "Firmware HTTP content length unavailable; using manifest size=%u", (unsigned)content_len);
+    } else {
+        ESP_LOGE(TAG, "Firmware size is required before flashing EFR32");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    if (content_len == 0 || content_len > partition->size) {
+        ESP_LOGE(TAG, "Firmware size %u does not fit cache partition size %u", (unsigned)content_len,
+            (unsigned)partition->size);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    esp_err_t err = esp_partition_erase_range(partition, 0, partition->size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to erase EFR32 firmware cache: %s", esp_err_to_name(err));
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    std::vector<uint8_t> buf(4096);
+    uint32_t received = 0;
+    uint32_t last_pc = 0;
+    esphome::md5::MD5Digest md5;
+    md5.init();
+    while (received < content_len) {
+        int r = esp_http_client_read(client, (char*)buf.data(),
+            std::min((size_t)buf.size(), (size_t)(content_len - received)));
+        if (r < 0) {
+            ESP_LOGE(TAG, "Firmware HTTP read failed at %u/%u: %d", (unsigned)received, (unsigned)content_len, r);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return false;
+        }
+        if (r == 0) {
+            ESP_LOGE(TAG, "Firmware HTTP ended early at %u/%u bytes", (unsigned)received, (unsigned)content_len);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return false;
+        }
+
+        err = esp_partition_write(partition, received, buf.data(), r);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to write EFR32 firmware cache at %u: %s", (unsigned)received,
+                esp_err_to_name(err));
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return false;
+        }
+        md5.add(buf.data(), r);
+        received += r;
+        update_progress_(received, content_len, last_pc);
+        App.feed_wdt();
+    }
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    md5.calculate();
+    char md5hex[33];
+    md5.get_hex(md5hex);
+    md5hex[32] = 0;
+    if (strcasecmp(expected_md5_.c_str(), md5hex) != 0) {
+        ESP_LOGE(TAG, "Downloaded firmware MD5 mismatch: expected %s, got %s", expected_md5_.c_str(), md5hex);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Firmware downloaded and verified. bytes=%u md5=%s", (unsigned)received, md5hex);
+    content_len_out = content_len;
+    return true;
+}
+
+bool EFR32Flasher::xmodem_send_(const esp_partition_t* partition, uint32_t content_len) {
     // XMODEM-CRC 128-byte blocks
-    std::vector<uint8_t> net_buf(1024);
     std::vector<uint8_t> block(128, 0x1A);
     uint32_t sent = 0;
     uint8_t seq = 1;
@@ -482,7 +594,7 @@ bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t conten
     esphome::md5::MD5Digest md5;
     md5.init();
 
-    ESP_LOGD(TAG, "Waiting for receiver 'C'…");
+    ESP_LOGD(TAG, "Waiting for receiver 'C'...");
     uint32_t tstart = millis();
     bool got_c = false;
     uint32_t last_cr = 0;
@@ -542,27 +654,15 @@ bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t conten
 
     while (sent < content_len) {
         const size_t payload_len = std::min<size_t>(128, content_len - sent);
-        size_t off = 0;
         std::fill(block.begin(), block.end(), 0x1A);
 
-        while (off < payload_len) {
-            int r = esp_http_client_read(client, (char*)net_buf.data(),
-                std::min((size_t)net_buf.size(), payload_len - off));
-            if (r < 0) {
-                ESP_LOGE(TAG, "Firmware HTTP read failed while filling block %u: %d", (unsigned)seq, r);
-                uart_->write_byte(CAN);
-                return false;
-            }
-            if (r == 0) {
-                ESP_LOGE(TAG, "Firmware HTTP ended early at %u/%u bytes", (unsigned)(sent + off),
-                    (unsigned)content_len);
-                uart_->write_byte(CAN);
-                return false;
-            }
-            std::memcpy(block.data() + off, net_buf.data(), r);
-            off += r;
-            App.feed_wdt();
+        esp_err_t err = esp_partition_read(partition, sent, block.data(), payload_len);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to read cached firmware at %u: %s", (unsigned)sent, esp_err_to_name(err));
+            uart_->write_byte(CAN);
+            return false;
         }
+        App.feed_wdt();
 
         uint8_t hdr[3] = { SOH, seq, (uint8_t)(0xFF - seq) };
         uint16_t crc = crc16_ccitt_(block.data(), 128);
@@ -668,6 +768,8 @@ void EFR32Flasher::run_update_() {
     set_busy_(true);
     std::string fw_url;
     if (ends_with_ignore_query_(manifest_url_, ".gbl")) {
+        expected_md5_.clear();
+        expected_size_ = 0;
         fw_url = manifest_url_;
         ESP_LOGI(TAG, "Using direct firmware URL (no manifest): %s", fw_url.c_str());
     } else {
@@ -678,23 +780,17 @@ void EFR32Flasher::run_update_() {
         ESP_LOGI(TAG, "Firmware: %s", fw_url.c_str());
     }
 
-    esp_http_client_handle_t client;
-    if (!http_open_(fw_url, client)) {
-        ESP_LOGE(TAG, "Firmware HTTP open failed");
+    uint32_t content_len = 0;
+    if (!download_firmware_(fw_url, content_len)) {
+        ESP_LOGE(TAG, "Firmware download/verification failed; not entering bootloader");
         set_busy_(false);
         return;
     }
-    int64_t len64 = esp_http_client_get_content_length(client);
-    uint32_t content_len = 0;
-    if (len64 > 0) {
-        content_len = (uint32_t)len64;
-    } else if (expected_size_ > 0) {
-        content_len = expected_size_;
-        ESP_LOGW(TAG, "Firmware HTTP content length unavailable; using manifest size=%u", (unsigned)content_len);
-    } else {
-        ESP_LOGE(TAG, "Firmware HTTP content length unavailable and manifest size is missing");
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
+
+    const esp_partition_t* fw_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+        ESP_PARTITION_SUBTYPE_ANY, EFR32_FW_PARTITION_LABEL);
+    if (fw_partition == nullptr) {
+        ESP_LOGE(TAG, "EFR32 firmware cache partition '%s' disappeared", EFR32_FW_PARTITION_LABEL);
         set_busy_(false);
         return;
     }
@@ -713,16 +809,13 @@ void EFR32Flasher::run_update_() {
     uart_->write_byte('\r');
     delay_(200);
 
-    bool ok = xmodem_send_(client, content_len);
-
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
+    bool ok = xmodem_send_(fw_partition, content_len);
 
     leave_bootloader_();
     apply_runtime_baud_();
     ESP_LOGI(TAG, "run_update finished ok=%d", ok ? 1 : 0);
     if (ok) {
-        ESP_LOGI(TAG, "EFR32 update finished OK. Waiting for NCP start marker…");
+        ESP_LOGI(TAG, "EFR32 update finished OK. Waiting for NCP start marker...");
         if (wait_for_ncp_start_(1500)) {
             ESP_LOGI(TAG, "NCP start marker {~ detected.");
         } else {
@@ -744,7 +837,7 @@ void EFR32Flasher::run_update_() {
 
 void EFR32Flasher::run_check_update_() {
     apply_runtime_baud_();
-    ESP_LOGI(TAG, "Checking EFR32 firmware manifest…");
+    ESP_LOGI(TAG, "Checking EFR32 firmware manifest...");
     if (manifest_url_.empty()) {
         ESP_LOGW(TAG, "No manifest URL configured; skipping update check.");
         return;

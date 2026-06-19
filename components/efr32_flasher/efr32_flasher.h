@@ -18,6 +18,7 @@
 #include "esphome/components/uart_hw_flow/uart_hw_flow.h"
 
 #include "esp_http_client.h"
+#include "esp_partition.h"
 
 #ifndef USE_ESP_IDF
 #error "EFR32 flasher requires ESP-IDF framework."
@@ -85,7 +86,8 @@ private:
         return crc;
     }
 
-    bool xmodem_send_(esp_http_client_handle_t client, uint32_t content_len);
+    bool download_firmware_(const std::string& url, uint32_t& content_len_out);
+    bool xmodem_send_(const esp_partition_t* partition, uint32_t content_len);
 
     // High level flows
     void run_update_();
