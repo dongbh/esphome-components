@@ -38,12 +38,26 @@ void UARTHwFlowComponent::dump_config() {
 
 void UARTHwFlowComponent::apply() {
 #ifdef USE_ESP_IDF
-  if (!this->rtscts_enable_) {
-    ESP_LOGD(TAG, "CTS/RTS hardware flow control disabled on UART%d", this->uart_num_);
+  if (this->uart_num_ < 0) {
+    ESP_LOGE(TAG, "UART HW flow control is not fully configured");
+    this->mark_failed();
     return;
   }
 
-  if (this->uart_num_ < 0 || this->tx_pin_ < 0 || this->rx_pin_ < 0) {
+  auto uart_num = static_cast<uart_port_t>(this->uart_num_);
+
+  if (!this->rtscts_enable_) {
+    esp_err_t err = uart_set_hw_flow_ctrl(uart_num, UART_HW_FLOWCTRL_DISABLE, 0);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "uart_set_hw_flow_ctrl disable failed: %s", esp_err_to_name(err));
+      this->mark_failed();
+      return;
+    }
+    ESP_LOGD(TAG, "Disabled CTS/RTS hardware flow control on UART%d", this->uart_num_);
+    return;
+  }
+
+  if (this->tx_pin_ < 0 || this->rx_pin_ < 0) {
     ESP_LOGE(TAG, "UART HW flow control is not fully configured");
     this->mark_failed();
     return;
@@ -55,7 +69,6 @@ void UARTHwFlowComponent::apply() {
     return;
   }
 
-  auto uart_num = static_cast<uart_port_t>(this->uart_num_);
   esp_err_t err = uart_set_pin(uart_num, this->tx_pin_, this->rx_pin_, this->rts_pin_, this->cts_pin_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "uart_set_pin failed: %s", esp_err_to_name(err));
