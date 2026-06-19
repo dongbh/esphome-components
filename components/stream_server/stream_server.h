@@ -10,8 +10,10 @@
 #endif
 
 #include <memory>
-#include <optional>
 #include <string>
+
+namespace esphome {
+namespace stream_server {
 
 class StreamServerComponent : public esphome::Component {
 public:
@@ -21,12 +23,6 @@ public:
     void set_buffer_size(size_t size) { this->buf_size_ = size; }
     void pause();
     void resume();
-    void set_keep_alive(int idle_s, int interval_s, int count) {
-        this->keep_alive_idle_s_ = idle_s;
-        this->keep_alive_interval_s_ = interval_s;
-        this->keep_alive_count_ = count;
-    }
-    void set_trace(bool v) { this->trace_ = v; }
 
 #ifdef USE_BINARY_SENSOR
     void set_connected_sensor(esphome::binary_sensor::BinarySensor *connected) { this->connected_sensor_ = connected; }
@@ -42,51 +38,29 @@ public:
     void set_port(uint16_t port) { this->port_ = port; }
 
 protected:
-    struct Client;
-
     void publish_sensor();
 
     void accept();
     void cleanup();
-    void close_client_(Client &client);
     void read();
-    void flush();
     void write();
 
-    size_t buf_index(size_t pos) { return pos & (this->buf_size_ - 1); }
-    /// Return the number of consecutive elements that are ahead of @p pos in memory.
-    size_t buf_ahead(size_t pos) { return (pos | (this->buf_size_ - 1)) - pos + 1; }
-
-    struct Client {
-        Client(std::unique_ptr<esphome::socket::Socket> socket, std::string identifier, size_t position);
-
-        std::unique_ptr<esphome::socket::Socket> socket{nullptr};
-        std::string identifier{};
-        bool disconnected{false};
-        size_t position{0};
-    };
+    std::unique_ptr<esphome::socket::Socket> client_socket_{nullptr};
+    std::string identifier_{};
 
     esphome::uart::UARTComponent *stream_{nullptr};
-    uint16_t port_;
-    size_t buf_size_;
+    uint16_t port_{6636};
+    size_t buf_size_{1024};
+
+    bool paused_{false};
 
 #ifdef USE_BINARY_SENSOR
-    esphome::binary_sensor::BinarySensor *connected_sensor_;
+    esphome::binary_sensor::BinarySensor *connected_sensor_{nullptr};
 #endif
 
     std::unique_ptr<uint8_t[]> buf_{};
-    size_t buf_head_{0};
-    size_t buf_tail_{0};
 
     std::unique_ptr<esphome::socket::Socket> socket_{};
-    std::optional<Client> client_{};
-
-    bool paused_{false};
-    bool trace_{false};
-
-    int keep_alive_idle_s_{0};
-    int keep_alive_interval_s_{0};
-    int keep_alive_count_{0};
 };
 
 template<typename... Ts> class PauseAction : public esphome::Action<Ts...> {
@@ -106,3 +80,6 @@ template<typename... Ts> class ResumeAction : public esphome::Action<Ts...> {
  protected:
   StreamServerComponent *parent_;
 };
+
+}  // namespace stream_server
+}  // namespace esphome

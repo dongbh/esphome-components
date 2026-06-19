@@ -14,6 +14,7 @@ CONF_TX_PIN = "tx_pin"
 CONF_RX_PIN = "rx_pin"
 CONF_RTS_PIN = "rts_pin"
 CONF_CTS_PIN = "cts_pin"
+CONF_RTSCTS_ENABLE = "rtscts_enable"
 CONF_RX_FLOW_CTRL_THRESH = "rx_flow_ctrl_thresh"
 CONF_EARLY_RTS_ASSERT = "early_rts_assert"
 
@@ -36,6 +37,12 @@ def validate_gpio_num(value):
     return value
 
 
+def validate_config(config):
+    if config[CONF_RTSCTS_ENABLE] and (CONF_RTS_PIN not in config or CONF_CTS_PIN not in config):
+        raise cv.Invalid("rts_pin and cts_pin are required when rtscts_enable is true")
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.only_on_esp32,
     cv.Schema(
@@ -45,12 +52,14 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_UART_NUM): validate_uart_num,
             cv.Required(CONF_TX_PIN): validate_gpio_num,
             cv.Required(CONF_RX_PIN): validate_gpio_num,
-            cv.Required(CONF_RTS_PIN): validate_gpio_num,
-            cv.Required(CONF_CTS_PIN): validate_gpio_num,
+            cv.Optional(CONF_RTS_PIN): validate_gpio_num,
+            cv.Optional(CONF_CTS_PIN): validate_gpio_num,
+            cv.Optional(CONF_RTSCTS_ENABLE, default=True): cv.boolean,
             cv.Optional(CONF_RX_FLOW_CTRL_THRESH, default=122): cv.int_range(min=1, max=127),
             cv.Optional(CONF_EARLY_RTS_ASSERT, default=True): cv.boolean,
         }
     ).extend(cv.COMPONENT_SCHEMA),
+    validate_config,
 )
 
 
@@ -64,6 +73,14 @@ async def to_code(config):
     uart_comp = await cg.get_variable(config[CONF_UART_ID])
     cg.add(var.set_uart(uart_comp))
     cg.add(var.set_uart_num(config[CONF_UART_NUM]))
-    cg.add(var.set_pins(config[CONF_TX_PIN], config[CONF_RX_PIN], config[CONF_RTS_PIN], config[CONF_CTS_PIN]))
+    cg.add(
+        var.set_pins(
+            config[CONF_TX_PIN],
+            config[CONF_RX_PIN],
+            config.get(CONF_RTS_PIN, -1),
+            config.get(CONF_CTS_PIN, -1),
+        )
+    )
+    cg.add(var.set_rtscts_enable(config[CONF_RTSCTS_ENABLE]))
     cg.add(var.set_rx_flow_ctrl_thresh(config[CONF_RX_FLOW_CTRL_THRESH]))
     cg.add(var.set_early_rts_assert(config[CONF_EARLY_RTS_ASSERT]))

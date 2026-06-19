@@ -16,6 +16,7 @@ class UARTHwFlowComponent : public Component {
     this->rts_pin_ = rts_pin;
     this->cts_pin_ = cts_pin;
   }
+  void set_rtscts_enable(bool rtscts_enable) { this->rtscts_enable_ = rtscts_enable; }
   void set_rx_flow_ctrl_thresh(int threshold) { this->rx_flow_ctrl_thresh_ = threshold; }
   void set_early_rts_assert(bool early_rts_assert) { this->early_rts_assert_ = early_rts_assert; }
 
@@ -32,6 +33,7 @@ class UARTHwFlowComponent : public Component {
   int rx_pin_{-1};
   int rts_pin_{-1};
   int cts_pin_{-1};
+  bool rtscts_enable_{true};
   int rx_flow_ctrl_thresh_{122};
   bool early_rts_assert_{true};
 };

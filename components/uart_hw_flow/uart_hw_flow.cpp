@@ -14,7 +14,7 @@ static const char *const TAG = "uart_hw_flow";
 
 void UARTHwFlowComponent::setup() {
 #ifdef USE_ESP_IDF
-  if (this->early_rts_assert_ && this->rts_pin_ >= 0) {
+  if (this->rtscts_enable_ && this->early_rts_assert_ && this->rts_pin_ >= 0) {
     gpio_reset_pin(static_cast<gpio_num_t>(this->rts_pin_));
     gpio_set_direction(static_cast<gpio_num_t>(this->rts_pin_), GPIO_MODE_OUTPUT);
     gpio_set_level(static_cast<gpio_num_t>(this->rts_pin_), 0);
@@ -31,14 +31,25 @@ void UARTHwFlowComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  UART num: %d", this->uart_num_);
   ESP_LOGCONFIG(TAG, "  TX/RX/RTS/CTS pins: %d/%d/%d/%d", this->tx_pin_, this->rx_pin_, this->rts_pin_,
                 this->cts_pin_);
+  ESP_LOGCONFIG(TAG, "  RTS/CTS enabled: %s", YESNO(this->rtscts_enable_));
   ESP_LOGCONFIG(TAG, "  RX flow threshold: %d", this->rx_flow_ctrl_thresh_);
   ESP_LOGCONFIG(TAG, "  Early RTS assert: %s", YESNO(this->early_rts_assert_));
 }
 
 void UARTHwFlowComponent::apply() {
 #ifdef USE_ESP_IDF
-  if (this->uart_num_ < 0 || this->tx_pin_ < 0 || this->rx_pin_ < 0 || this->rts_pin_ < 0 ||
-      this->cts_pin_ < 0) {
+  if (!this->rtscts_enable_) {
+    ESP_LOGD(TAG, "CTS/RTS hardware flow control disabled on UART%d", this->uart_num_);
+    return;
+  }
+
+  if (this->uart_num_ < 0 || this->tx_pin_ < 0 || this->rx_pin_ < 0) {
+    ESP_LOGE(TAG, "UART HW flow control is not fully configured");
+    this->mark_failed();
+    return;
+  }
+
+  if (this->rts_pin_ < 0 || this->cts_pin_ < 0) {
     ESP_LOGE(TAG, "UART HW flow control is not fully configured");
     this->mark_failed();
     return;
