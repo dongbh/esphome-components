@@ -14,6 +14,7 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/md5/md5.h"
 #include "esphome/components/uart_hw_flow/uart_hw_flow.h"
 
@@ -52,9 +53,10 @@ public:
     void set_chip_text(esphome::text_sensor::TextSensor* t) { chip_text_ = t; }
     void set_variant(uint8_t v) { variant_force_ = v; } // 0=auto,1=MGM24,2=BM24
     void set_busy_sensor(esphome::binary_sensor::BinarySensor* b) { busy_sensor_ = b; }
+    void set_progress_sensor(esphome::sensor::Sensor* s) { progress_sensor_ = s; }
 
-    void start_firmware_update() { want_update_ = true; }
-    void start_check_update() { want_check_ = true; }
+    void start_firmware_update();
+    void start_check_update();
 
     void setup() override;
     void loop() override;
@@ -72,7 +74,8 @@ private:
     bool read_byte_(uint8_t& b, uint32_t timeout_ms = 500);
     void flush_uart_();
     void delay_(uint32_t ms);
-    void update_progress_(uint32_t total, uint32_t expected, uint32_t& last_pc);
+    void update_progress_(uint32_t total, uint32_t expected, uint32_t& last_pc, uint8_t base_pc = 0,
+        uint8_t range_pc = 100);
     bool wait_for_ncp_start_(uint32_t ms);
     std::string detect_variant_key_();
 
@@ -117,9 +120,11 @@ private:
     esphome::text_sensor::TextSensor* mfg_string_text_{ nullptr };
     esphome::text_sensor::TextSensor* chip_text_{ nullptr };
     esphome::binary_sensor::BinarySensor* busy_sensor_{ nullptr };
+    esphome::sensor::Sensor* progress_sensor_{ nullptr };
     std::string manifest_url_;
     bool want_update_{ false };
     bool want_check_{ false };
+    bool running_{ false };
     bool verbose_{ false };
     bool show_progress_{ true };
     uint8_t progress_step_{ 5 };

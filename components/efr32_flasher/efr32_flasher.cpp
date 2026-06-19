@@ -564,7 +564,7 @@ bool EFR32Flasher::download_firmware_(const std::string& url, uint32_t& content_
         }
         md5.add(buf.data(), r);
         received += r;
-        update_progress_(received, content_len, last_pc);
+        update_progress_(received, content_len, last_pc, 0, 50);
         App.feed_wdt();
     }
 
@@ -711,7 +711,7 @@ bool EFR32Flasher::xmodem_send_(const esp_partition_t* partition, uint32_t conte
         md5.add(block.data(), payload_len);
         sent += payload_len;
         seq++;
-        update_progress_(sent, content_len, last_pc);
+        update_progress_(sent, content_len, last_pc, 50, 50);
     }
 
     // Send EOT
@@ -733,19 +733,22 @@ bool EFR32Flasher::xmodem_send_(const esp_partition_t* partition, uint32_t conte
     return true;
 }
 
-void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t& last_pc) {
-    if (!show_progress_)
-        return;
+void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t& last_pc, uint8_t base_pc,
+    uint8_t range_pc) {
     if (expected > 0) {
-        uint32_t pc = (uint64_t)total * 100 / expected;
+        uint32_t pc = base_pc + (uint64_t)total * range_pc / expected;
         if (pc >= last_pc + progress_step_) {
             last_pc = pc - (pc % progress_step_);
-            ESP_LOGI(TAG, "Progress: %u%% (%u/%u)", (unsigned)pc, (unsigned)total, (unsigned)expected);
+            if (show_progress_)
+                ESP_LOGI(TAG, "Progress: %u%% (%u/%u)", (unsigned)pc, (unsigned)total, (unsigned)expected);
+            if (progress_sensor_ != nullptr)
+                progress_sensor_->publish_state(pc);
         }
     } else {
         if (total / 65536 > last_pc) {
             last_pc = total / 65536;
-            ESP_LOGI(TAG, "Progress: %u bytes", (unsigned)total);
+            if (show_progress_)
+                ESP_LOGI(TAG, "Progress: %u bytes", (unsigned)total);
         }
     }
 }
@@ -755,7 +758,11 @@ void EFR32Flasher::run_update_() {
     ESP_LOGI(TAG, "run_update start variant_force=%u override='%s'", static_cast<unsigned>(variant_force_),
         variant_key_override_.c_str());
     if (!uart_ || !bl_sw_ || !rst_sw_) {
-        ESP_LOGE(TAG, "Not configured (uart/switches)"); return;
+        ESP_LOGE(TAG, "Not configured (uart/switches)");
+        set_busy_(false);
+        if (progress_sensor_ != nullptr)
+            progress_sensor_->publish_state(0);
+        return;
     }
     variant_key_override_.clear();
     if (variant_force_ == 0) {
@@ -766,6 +773,8 @@ void EFR32Flasher::run_update_() {
     }
     ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
     set_busy_(true);
+    if (progress_sensor_ != nullptr)
+        progress_sensor_->publish_state(0);
     std::string fw_url;
     if (ends_with_ignore_query_(manifest_url_, ".gbl")) {
         expected_md5_.clear();
@@ -775,6 +784,8 @@ void EFR32Flasher::run_update_() {
     } else {
         if (!fetch_manifest_(manifest_url_, fw_url)) {
             ESP_LOGE(TAG, "Manifest fetch/parse failed");
+            if (progress_sensor_ != nullptr)
+                progress_sensor_->publish_state(0);
             set_busy_(false); return;
         }
         ESP_LOGI(TAG, "Firmware: %s", fw_url.c_str());
@@ -783,6 +794,8 @@ void EFR32Flasher::run_update_() {
     uint32_t content_len = 0;
     if (!download_firmware_(fw_url, content_len)) {
         ESP_LOGE(TAG, "Firmware download/verification failed; not entering bootloader");
+        if (progress_sensor_ != nullptr)
+            progress_sensor_->publish_state(0);
         set_busy_(false);
         return;
     }
@@ -791,6 +804,8 @@ void EFR32Flasher::run_update_() {
         ESP_PARTITION_SUBTYPE_ANY, EFR32_FW_PARTITION_LABEL);
     if (fw_partition == nullptr) {
         ESP_LOGE(TAG, "EFR32 firmware cache partition '%s' disappeared", EFR32_FW_PARTITION_LABEL);
+        if (progress_sensor_ != nullptr)
+            progress_sensor_->publish_state(0);
         set_busy_(false);
         return;
     }
@@ -815,6 +830,8 @@ void EFR32Flasher::run_update_() {
     apply_runtime_baud_();
     ESP_LOGI(TAG, "run_update finished ok=%d", ok ? 1 : 0);
     if (ok) {
+        if (progress_sensor_ != nullptr)
+            progress_sensor_->publish_state(100);
         ESP_LOGI(TAG, "EFR32 update finished OK. Waiting for NCP start marker...");
         if (wait_for_ncp_start_(1500)) {
             ESP_LOGI(TAG, "NCP start marker {~ detected.");
@@ -830,6 +847,8 @@ void EFR32Flasher::run_update_() {
                 latest_text_->publish_state(manifest_version_.c_str());
         }
     } else {
+        if (progress_sensor_ != nullptr)
+            progress_sensor_->publish_state(0);
         ESP_LOGE(TAG, "EFR32 update failed");
     }
     set_busy_(false);
@@ -862,16 +881,37 @@ void EFR32Flasher::run_check_update_() {
         latest_text_->publish_state(manifest_version_.c_str());
 }
 
+void EFR32Flasher::start_firmware_update() {
+    if (running_ || want_update_ || want_check_) {
+        ESP_LOGW(TAG, "EFR32 flasher is busy; ignoring firmware update request");
+        return;
+    }
+    set_busy_(true);
+    want_update_ = true;
+}
+
+void EFR32Flasher::start_check_update() {
+    if (running_ || want_update_ || want_check_) {
+        ESP_LOGW(TAG, "EFR32 flasher is busy; ignoring update check request");
+        return;
+    }
+    want_check_ = true;
+}
+
 void EFR32Flasher::loop() {
     if (want_check_) {
         want_check_ = false;
+        running_ = true;
         run_check_update_();
+        running_ = false;
         return;
     }
     if (!want_update_)
         return;
     want_update_ = false;
+    running_ = true;
     run_update_();
+    running_ = false;
 }
 
 std::string EFR32Flasher::detect_variant_key_() {

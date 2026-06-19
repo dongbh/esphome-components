@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import uart, switch as switch_, text_sensor, binary_sensor
+from esphome.components import uart, switch as switch_, text_sensor, binary_sensor, sensor
 from esphome.const import CONF_ID, CONF_URL
 from esphome.automation import register_action
 
@@ -31,6 +31,7 @@ CONF_BAUD_RATE = "baud_rate"
 CONF_BOOT_BAUD_RATE = "bootloader_baud_rate"
 CONF_VARIANT = "variant"
 CONF_BUSY_BINARY_SENSOR = "busy_binary_sensor"
+CONF_PROGRESS_SENSOR = "progress_sensor"
 CONF_UART_HW_FLOW_ID = "uart_hw_flow_id"
 efr32_ns = cg.esphome_ns.namespace("efr32_flasher")
 EFR32Flasher = efr32_ns.class_("EFR32Flasher", cg.Component)
@@ -69,6 +70,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BOOT_BAUD_RATE, default=115200): cv.int_range(min=9600, max=921600),
         cv.Optional(CONF_PAUSE_SWITCH): cv.use_id(switch_.Switch),
         cv.Optional(CONF_BUSY_BINARY_SENSOR): cv.use_id(binary_sensor.BinarySensor),
+        cv.Optional(CONF_PROGRESS_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_UART_HW_FLOW_ID): _maybe_uart_hw_flow_use_id,
         # variant: auto | MGM24 | BM24 (case-insensitive)
         cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "mgm24", "bm24", lower=True),
@@ -165,5 +167,8 @@ async def to_code(config):
     if CONF_BUSY_BINARY_SENSOR in config:
         bs = await cg.get_variable(config[CONF_BUSY_BINARY_SENSOR])
         cg.add(var.set_busy_sensor(bs))
+    if CONF_PROGRESS_SENSOR in config:
+        progress = await cg.get_variable(config[CONF_PROGRESS_SENSOR])
+        cg.add(var.set_progress_sensor(progress))
 
 # Old probe actions removed to keep component lean
