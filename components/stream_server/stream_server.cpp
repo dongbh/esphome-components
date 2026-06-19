@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstring>
+#include <netinet/tcp.h>
 #include <span>
 
 namespace esphome {
@@ -81,6 +83,11 @@ void StreamServerComponent::accept() {
     this->cleanup();
     this->client_socket_ = std::move(socket);
     this->client_socket_->setblocking(false);
+
+    int nodelay = 1;
+    if (setsockopt(this->client_socket_->get_fd(), IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) != 0) {
+        ESP_LOGW(TAG, "Failed to set TCP_NODELAY for client: %s", strerror(errno));
+    }
 
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
     this->identifier_ = std::string{esphome::socket::SOCKADDR_STR_LEN, 0};
