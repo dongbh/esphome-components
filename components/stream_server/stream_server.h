@@ -11,6 +11,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace esphome {
 namespace stream_server {
@@ -18,11 +19,9 @@ namespace stream_server {
 class StreamServerComponent : public esphome::Component {
 public:
     StreamServerComponent() = default;
-    explicit StreamServerComponent(esphome::uart::UARTComponent *stream) : stream_{stream} {}
-    void set_uart_parent(esphome::uart::UARTComponent *parent) { this->stream_ = parent; }
+    explicit StreamServerComponent(esphome::uart::UARTComponent* stream) : stream_{ stream } {}
+    void set_uart_parent(esphome::uart::UARTComponent* parent) { this->stream_ = parent; }
     void set_buffer_size(size_t size) { this->buf_size_ = size; }
-    void pause();
-    void resume();
 
 #ifdef USE_BINARY_SENSOR
     void set_connected_sensor(esphome::binary_sensor::BinarySensor *connected) { this->connected_sensor_ = connected; }
@@ -32,6 +31,10 @@ public:
     void loop() override;
     void dump_config() override;
     void on_shutdown() override;
+
+    void pause();
+    void resume();
+
 
     float get_setup_priority() const override { return esphome::setup_priority::AFTER_WIFI; }
 
@@ -45,9 +48,14 @@ protected:
     void read();
     void write();
 
-    std::unique_ptr<esphome::socket::Socket> client_socket_{nullptr};
-    std::string identifier_{};
+    struct Client {
+        Client(std::unique_ptr<esphome::socket::Socket> socket, std::string identifier);
 
+        std::unique_ptr<esphome::socket::Socket> socket{nullptr};
+        std::string identifier{};
+        bool disconnected{false};
+    };
+    
     esphome::uart::UARTComponent *stream_{nullptr};
     uint16_t port_{6636};
     size_t buf_size_{1024};
@@ -55,31 +63,34 @@ protected:
     bool paused_{false};
 
 #ifdef USE_BINARY_SENSOR
-    esphome::binary_sensor::BinarySensor *connected_sensor_{nullptr};
+    esphome::binary_sensor::BinarySensor *connected_sensor_;
 #endif
 
     std::unique_ptr<uint8_t[]> buf_{};
 
     std::unique_ptr<esphome::socket::Socket> socket_{};
+    std::vector<Client> clients_{};
 };
 
-template<typename... Ts> class PauseAction : public esphome::Action<Ts...> {
- public:
-  explicit PauseAction(StreamServerComponent *parent) : parent_(parent) {}
-  void play(const Ts &...x) override { this->parent_->pause(); }
+template <typename... Ts>
+class PauseAction : public esphome::Action<Ts...> {
+    public:
+        explicit PauseAction(StreamServerComponent *ss) : ss_(ss) {}
+        void play(const Ts &...x) override { this->ss_->pause(); }
 
- protected:
-  StreamServerComponent *parent_;
+    protected:
+        StreamServerComponent *ss_;
 };
 
-template<typename... Ts> class ResumeAction : public esphome::Action<Ts...> {
- public:
-  explicit ResumeAction(StreamServerComponent *parent) : parent_(parent) {}
-  void play(const Ts &...x) override { this->parent_->resume(); }
+template <typename... Ts>
+class ResumeAction : public esphome::Action<Ts...> {
+    public:
+        explicit ResumeAction(StreamServerComponent *ss) : ss_(ss) {}
+        void play(const Ts &...x) override { this->ss_->resume(); }
 
- protected:
-  StreamServerComponent *parent_;
+    protected:
+        StreamServerComponent *ss_;
 };
 
-}  // namespace stream_server
+} // namespace stream_server
 }  // namespace esphome
