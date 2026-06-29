@@ -46,15 +46,11 @@ protected:
     void accept();
     void cleanup();
     void read();
+//    void flush();
     void write();
 
-    struct Client {
-        Client(std::unique_ptr<esphome::socket::Socket> socket, std::string identifier);
-
-        std::unique_ptr<esphome::socket::Socket> socket{nullptr};
-        std::string identifier{};
-        bool disconnected{false};
-    };
+    std::unique_ptr<esphome::socket::Socket> client_socket{nullptr};
+    std::string identifier{};
     
     esphome::uart::UARTComponent *stream_{nullptr};
     uint16_t port_{6636};
@@ -69,7 +65,6 @@ protected:
     std::unique_ptr<uint8_t[]> buf_{};
 
     std::unique_ptr<esphome::socket::Socket> socket_{};
-    std::vector<Client> clients_{};
 };
 
 template <typename... Ts>
