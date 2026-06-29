@@ -36,6 +36,15 @@ void UARTHwFlowComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Early RTS assert: %s", YESNO(this->early_rts_assert_));
 }
 
+void UARTHwFlowComponent::set_rtscts_enabled_runtime(bool enabled) {
+  if (this->rtscts_enable_ == enabled) {
+    this->apply();
+    return;
+  }
+  this->rtscts_enable_ = enabled;
+  this->apply();
+}
+
 void UARTHwFlowComponent::apply() {
 #ifdef USE_ESP_IDF
   if (this->uart_num_ < 0) {

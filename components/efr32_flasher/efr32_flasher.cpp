@@ -150,6 +150,7 @@ static constexpr uint8_t NAK = 0x15;
 static constexpr uint8_t CAN = 0x18;
 static constexpr uint8_t CCHR = 'C';
 static constexpr const char* EFR32_FW_PARTITION_LABEL = "efr32_fw";
+static constexpr const char* TEMP_DEFAULT_VARIANT_KEY = "zs3lnone";
 
 EFR32Flasher::~EFR32Flasher() {}
 
@@ -196,6 +197,48 @@ void EFR32Flasher::apply_runtime_baud_() {
 
 void EFR32Flasher::apply_bootloader_baud_() {
     set_uart_baud_(bootloader_baud_rate_);
+}
+
+bool EFR32Flasher::disable_flow_for_bootloader_() {
+    if (this->uart_hw_flow_ == nullptr)
+        return false;
+
+    bool restore_flow = this->uart_hw_flow_->is_rtscts_enabled();
+    if (restore_flow) {
+        ESP_LOGD(TAG, "Disabling UART RTS/CTS for Gecko bootloader");
+        if (this->uart_ != nullptr)
+            this->uart_->flush();
+        this->uart_hw_flow_->set_rtscts_enabled_runtime(false);
+        delay_(50);
+    }
+    return restore_flow;
+}
+
+void EFR32Flasher::restore_flow_after_bootloader_(bool restore_flow) {
+    if (!restore_flow || this->uart_hw_flow_ == nullptr)
+        return;
+
+    ESP_LOGD(TAG, "Restoring UART RTS/CTS for EZSP runtime");
+    this->uart_hw_flow_->set_rtscts_enabled_runtime(true);
+    delay_(50);
+}
+
+bool EFR32Flasher::pause_stream_for_bootloader_() {
+    if (this->stream_server_ == nullptr)
+        return false;
+
+    ESP_LOGD(TAG, "Pausing stream server for Gecko bootloader");
+    this->stream_server_->pause();
+    delay_(50);
+    return true;
+}
+
+void EFR32Flasher::resume_stream_after_bootloader_(bool resume_stream) {
+    if (!resume_stream || this->stream_server_ == nullptr)
+        return;
+
+    ESP_LOGD(TAG, "Resuming stream server after Gecko bootloader");
+    this->stream_server_->resume();
 }
 
 void EFR32Flasher::delay_(uint32_t ms) {
@@ -768,11 +811,12 @@ void EFR32Flasher::run_update_() {
     if (variant_force_ == 0) {
         variant_key_override_ = detect_variant_key_();
         if (variant_key_override_.empty()) {
-            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using manifest fallback");
+            variant_key_override_ = TEMP_DEFAULT_VARIANT_KEY;
+            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using temporary default '%s'",
+                TEMP_DEFAULT_VARIANT_KEY);
         }
     }
     ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
-    set_busy_(true);
     if (progress_sensor_ != nullptr)
         progress_sensor_->publish_state(0);
     std::string fw_url;
@@ -810,6 +854,9 @@ void EFR32Flasher::run_update_() {
         return;
     }
 
+    set_busy_(true);
+    bool resume_stream = pause_stream_for_bootloader_();
+    bool restore_flow = disable_flow_for_bootloader_();
     apply_bootloader_baud_();
     enter_bootloader_();
     ESP_LOGD(TAG, "Bootloader entered, starting upload");
@@ -828,6 +875,8 @@ void EFR32Flasher::run_update_() {
 
     leave_bootloader_();
     apply_runtime_baud_();
+    restore_flow_after_bootloader_(restore_flow);
+    resume_stream_after_bootloader_(resume_stream);
     ESP_LOGI(TAG, "run_update finished ok=%d", ok ? 1 : 0);
     if (ok) {
         if (progress_sensor_ != nullptr)
@@ -868,7 +917,9 @@ void EFR32Flasher::run_check_update_() {
     if (variant_force_ == 0 && variant_key_override_.empty()) {
         variant_key_override_ = detect_variant_key_();
         if (variant_key_override_.empty()) {
-            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using manifest fallback");
+            variant_key_override_ = TEMP_DEFAULT_VARIANT_KEY;
+            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using temporary default '%s'",
+                TEMP_DEFAULT_VARIANT_KEY);
         }
     }
     ESP_LOGD(TAG, "run_check_update variant override='%s' force=%u", variant_key_override_.c_str(),
@@ -886,7 +937,6 @@ void EFR32Flasher::start_firmware_update() {
         ESP_LOGW(TAG, "EFR32 flasher is busy; ignoring firmware update request");
         return;
     }
-    set_busy_(true);
     want_update_ = true;
 }
 

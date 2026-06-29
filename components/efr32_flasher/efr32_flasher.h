@@ -17,6 +17,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/md5/md5.h"
 #include "esphome/components/uart_hw_flow/uart_hw_flow.h"
+#include "esphome/components/stream_server/stream_server.h"
 
 #include "esp_http_client.h"
 #include "esp_partition.h"
@@ -32,6 +33,9 @@ public:
     ~EFR32Flasher();
     void set_uart(esphome::uart::UARTComponent* u) { uart_ = u; }
     void set_uart_hw_flow(esphome::uart_hw_flow::UARTHwFlowComponent* flow) { uart_hw_flow_ = flow; }
+    void set_stream_server(esphome::stream_server::StreamServerComponent* stream_server) {
+        stream_server_ = stream_server;
+    }
     void set_bl_switch(esphome::switch_::Switch* s) { bl_sw_ = s; }
     void set_rst_switch(esphome::switch_::Switch* s) { rst_sw_ = s; }
     void set_pause_switch(esphome::switch_::Switch* s) { pause_sw_ = s; }
@@ -102,10 +106,15 @@ private:
     void apply_runtime_baud_();
     void apply_bootloader_baud_();
     void set_uart_baud_(uint32_t baud);
+    bool disable_flow_for_bootloader_();
+    void restore_flow_after_bootloader_(bool restore_flow);
+    bool pause_stream_for_bootloader_();
+    void resume_stream_after_bootloader_(bool resume_stream);
 
     // State
     esphome::uart::UARTComponent* uart_{ nullptr };
     esphome::uart_hw_flow::UARTHwFlowComponent* uart_hw_flow_{ nullptr };
+    esphome::stream_server::StreamServerComponent* stream_server_{ nullptr };
     esphome::switch_::Switch* bl_sw_{ nullptr };
     esphome::switch_::Switch* rst_sw_{ nullptr };
     esphome::switch_::Switch* pause_sw_{ nullptr };

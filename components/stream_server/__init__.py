@@ -51,6 +51,7 @@ async def to_code(config):
     "stream_server.pause",
     PauseAction,
     cv.Schema({cv.Required(CONF_ID): cv.use_id(StreamServerComponent)}),
+    synchronous=True,
 )
 async def stream_server_pause_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
@@ -61,6 +62,7 @@ async def stream_server_pause_to_code(config, action_id, template_arg, args):
     "stream_server.resume",
     ResumeAction,
     cv.Schema({cv.Required(CONF_ID): cv.use_id(StreamServerComponent)}),
+    synchronous=True,
 )
 async def stream_server_resume_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])

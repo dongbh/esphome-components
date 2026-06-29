@@ -9,6 +9,11 @@ try:
 except ImportError:
     uart_hw_flow = None
 
+try:
+    from esphome.components import stream_server
+except ImportError:
+    stream_server = None
+
 DEPENDENCIES = ["uart", "switch"]
 AUTO_LOAD = ["md5", "json", "uart_hw_flow"]
 
@@ -33,6 +38,7 @@ CONF_VARIANT = "variant"
 CONF_BUSY_BINARY_SENSOR = "busy_binary_sensor"
 CONF_PROGRESS_SENSOR = "progress_sensor"
 CONF_UART_HW_FLOW_ID = "uart_hw_flow_id"
+CONF_STREAM_SERVER_ID = "stream_server_id"
 efr32_ns = cg.esphome_ns.namespace("efr32_flasher")
 EFR32Flasher = efr32_ns.class_("EFR32Flasher", cg.Component)
 UpdateFirmwareAction = efr32_ns.class_("UpdateFirmwareAction")
@@ -45,6 +51,13 @@ def _maybe_uart_hw_flow_use_id(value):
     if uart_hw_flow is None:
         raise cv.Invalid("uart_hw_flow component not available")
     return cv.use_id(uart_hw_flow.UARTHwFlowComponent)(value)
+
+
+def _maybe_stream_server_use_id(value):
+    if stream_server is None:
+        raise cv.Invalid("stream_server component not available")
+    return cv.use_id(stream_server.StreamServerComponent)(value)
+
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -72,13 +85,19 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BUSY_BINARY_SENSOR): cv.use_id(binary_sensor.BinarySensor),
         cv.Optional(CONF_PROGRESS_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_UART_HW_FLOW_ID): _maybe_uart_hw_flow_use_id,
+        cv.Optional(CONF_STREAM_SERVER_ID): _maybe_stream_server_use_id,
         # variant: auto | MGM24 | BM24 (case-insensitive)
         cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "mgm24", "bm24", lower=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
 
-@register_action("efr32_flasher.update_firmware", UpdateFirmwareAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}))
+@register_action(
+    "efr32_flasher.update_firmware",
+    UpdateFirmwareAction,
+    cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}),
+    synchronous=False,
+)
 async def update_firmware_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
@@ -86,7 +105,12 @@ async def update_firmware_action_to_code(config, action_id, template_arg, args):
     return act
 
 
-@register_action("efr32_flasher.check_update", CheckUpdateAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}))
+@register_action(
+    "efr32_flasher.check_update",
+    CheckUpdateAction,
+    cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}),
+    synchronous=False,
+)
 async def check_update_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
@@ -113,6 +137,9 @@ async def to_code(config):
     if CONF_UART_HW_FLOW_ID in config:
         flow = await cg.get_variable(config[CONF_UART_HW_FLOW_ID])
         cg.add(var.set_uart_hw_flow(flow))
+    if CONF_STREAM_SERVER_ID in config:
+        ss = await cg.get_variable(config[CONF_STREAM_SERVER_ID])
+        cg.add(var.set_stream_server(ss))
     if config[CONF_BAUD_RATE] > 0:
         cg.add(var.set_runtime_baud_rate(config[CONF_BAUD_RATE]))
     if CONF_BOOT_BAUD_RATE in config:
