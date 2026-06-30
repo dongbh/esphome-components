@@ -30,6 +30,7 @@ CONF_XNCP_VERSION_TEXT = "xncp_version_text"
 CONF_IEEE_TEXT = "ieee_text"
 CONF_MANUF_ID_TEXT = "manuf_id_text"
 CONF_BOARD_NAME_TEXT = "board_name_text"
+CONF_BOARD_CONFIG_TEXT = "board_config_text"
 CONF_MFG_STRING_TEXT = "mfg_string_text"
 CONF_CHIP_TEXT = "chip_text"
 CONF_BAUD_RATE = "baud_rate"
@@ -77,6 +78,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_IEEE_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_MANUF_ID_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_BOARD_NAME_TEXT): cv.use_id(text_sensor.TextSensor),
+        cv.Optional(CONF_BOARD_CONFIG_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_MFG_STRING_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_CHIP_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_BAUD_RATE, default=0): cv.int_range(min=0, max=921600),
@@ -86,7 +88,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PROGRESS_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_UART_HW_FLOW_ID): _maybe_uart_hw_flow_use_id,
         cv.Optional(CONF_STREAM_SERVER_ID): _maybe_stream_server_use_id,
-        # auto probes board_name_text first. Any other value is used as the manifest
+        # auto probes board_config_text/board_name_text first. Any other value is used as the manifest
         # variant fallback if probing does not return a key.
         cv.Optional(CONF_VARIANT, default="auto"): cv.string_strict,
     }
@@ -178,6 +180,9 @@ async def to_code(config):
     if CONF_BOARD_NAME_TEXT in config:
         t = await cg.get_variable(config[CONF_BOARD_NAME_TEXT])
         cg.add(var.set_board_name_text(t))
+    if CONF_BOARD_CONFIG_TEXT in config:
+        t = await cg.get_variable(config[CONF_BOARD_CONFIG_TEXT])
+        cg.add(var.set_board_config_text(t))
     if CONF_MFG_STRING_TEXT in config:
         t = await cg.get_variable(config[CONF_MFG_STRING_TEXT])
         cg.add(var.set_mfg_string_text(t))

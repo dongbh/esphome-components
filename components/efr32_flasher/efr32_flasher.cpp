@@ -409,12 +409,10 @@ bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_o
     expected_size_ = 0;
     manifest_version_.clear();
 
-    // Try variants object: choose based on forced variant or autodetected key
+    // Try variants object: choose the first matching autodetected/fallback key.
     if (doc["variants"].is<JsonObjectConst>()) {
         auto obj = doc["variants"].as<JsonObjectConst>();
-        std::string key = variant_key_override_;
-
-        if (!key.empty()) {
+        for (const auto& key : build_variant_candidates_()) {
             auto v = obj[key.c_str()];
             if (!v.isNull()) {
                 if (v["fw_url"].is<const char*>())
@@ -426,6 +424,7 @@ bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_o
                 if (v["version"].is<const char*>())
                     manifest_version_ = v["version"].as<const char*>();
                 ESP_LOGI(TAG, "Manifest variant '%s' selected", key.c_str());
+                break;
             } else {
                 ESP_LOGW(TAG, "Manifest does not provide variant '%s'", key.c_str());
             }
@@ -791,7 +790,7 @@ void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t&
 
 void EFR32Flasher::run_update_() {
     apply_runtime_baud_();
-    ESP_LOGI(TAG, "run_update start variant_fallback='%s' override='%s'", variant_fallback_key_.c_str(),
+    ESP_LOGI(TAG, "run_update start variant_fallback='%s' detected='%s'", variant_fallback_key_.c_str(),
         variant_key_override_.c_str());
     if (!uart_ || !bl_sw_ || !rst_sw_) {
         ESP_LOGE(TAG, "Not configured (uart/switches)");
@@ -803,15 +802,9 @@ void EFR32Flasher::run_update_() {
     variant_key_override_.clear();
     variant_key_override_ = detect_variant_key_();
     if (variant_key_override_.empty()) {
-        if (!variant_fallback_key_.empty() && variant_fallback_key_ != "auto") {
-            variant_key_override_ = variant_fallback_key_;
-            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using configured fallback '%s'",
-                variant_key_override_.c_str());
-        } else {
-            ESP_LOGW(TAG, "Auto variant detection did not yield a match and no fallback variant is configured");
-        }
+        ESP_LOGW(TAG, "Auto variant detection did not yield a match");
     }
-    ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
+    ESP_LOGD(TAG, "Detected variant='%s'", variant_key_override_.c_str());
     if (progress_sensor_ != nullptr)
         progress_sensor_->publish_state(0);
     std::string fw_url;
@@ -909,19 +902,11 @@ void EFR32Flasher::run_check_update_() {
         ESP_LOGW(TAG, "Custom firmware URL configured; skipping manifest update check.");
         return;
     }
-    if (variant_key_override_.empty()) {
-        variant_key_override_ = detect_variant_key_();
-        if (variant_key_override_.empty()) {
-            if (!variant_fallback_key_.empty() && variant_fallback_key_ != "auto") {
-                variant_key_override_ = variant_fallback_key_;
-                ESP_LOGW(TAG, "Auto variant detection did not yield a match; using configured fallback '%s'",
-                    variant_key_override_.c_str());
-            } else {
-                ESP_LOGW(TAG, "Auto variant detection did not yield a match and no fallback variant is configured");
-            }
-        }
-    }
-    ESP_LOGD(TAG, "run_check_update variant override='%s' fallback='%s'", variant_key_override_.c_str(),
+    variant_key_override_.clear();
+    variant_key_override_ = detect_variant_key_();
+    if (variant_key_override_.empty())
+        ESP_LOGW(TAG, "Auto variant detection did not yield a match");
+    ESP_LOGD(TAG, "run_check_update detected='%s' fallback='%s'", variant_key_override_.c_str(),
         variant_fallback_key_.c_str());
     std::string fw_url;
     if (!fetch_manifest_(manifest_url_, fw_url)) {
@@ -964,60 +949,69 @@ void EFR32Flasher::loop() {
 }
 
 std::string EFR32Flasher::detect_variant_key_() {
-    auto normalize = [](const std::string& input) {
-        std::string norm;
-        norm.reserve(input.size());
-        for (char ch : input) {
-            if (ch == ' ' || ch == '-' || ch == '_' || ch == '/' || ch == '\\' || ch == '.')
-                continue;
-            norm.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
-        }
-        return norm;
-    };
-
     auto match_from_source = [&](const char* label, esphome::text_sensor::TextSensor* sensor) -> std::string {
         if (sensor == nullptr)
             return {};
         std::string value = sensor->get_state();
         if (value.empty())
             return {};
+        ESP_LOGD(TAG, "Variant probe %s='%s'", label, value.c_str());
         return value;
-/*    
-        std::string norm = normalize(value);
-        if (norm.empty())
-            return {};
+    };
 
-        ESP_LOGD(TAG, "Variant probe %s='%s' (norm='%s')", label, value.c_str(), norm.c_str());
-        return norm;
-*/
-        /*
-        if (norm.find("mg21none") != std::string::npos || norm.find("MG21NONE") != std::string::npos) {
-            ESP_LOGI(TAG, "Variant detected as BM24 via %s='%s'", label, value.c_str());
-            return "mg21none";
-        }
-        if (norm.find("mg21hw") != std::string::npos || norm.find("MG21HW") != std::string::npos) {
-            ESP_LOGI(TAG, "Variant detected as MGM24 via %s='%s'", label, value.c_str());
-            return "mg21hw";
-        }
-        return {};
-*/
-        };
-
-    return match_from_source("board_name", board_name_text_);
-/*   
+    if (auto key = match_from_source("board_config", board_config_text_); !key.empty())
+        return key;
 
     if (auto key = match_from_source("board_name", board_name_text_); !key.empty())
         return key;
     if (auto key = match_from_source("mfg_string", mfg_string_text_); !key.empty())
         return key;
-    if (auto key = match_from_source("manufacturer", manuf_id_text_); !key.empty())
-        return key;
     if (auto key = match_from_source("chip", chip_text_); !key.empty())
         return key;
 
-    ESP_LOGW(TAG, "Unable to determine EFR32 variant from probed text sensors (board/mfg/manufacturer)");
+    ESP_LOGW(TAG, "Unable to determine EFR32 variant from probed text sensors");
     return {};
-*/
+}
+
+std::vector<std::string> EFR32Flasher::build_variant_candidates_() {
+    std::vector<std::string> candidates;
+
+    auto add_unique = [&](std::string key) {
+        key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        }), key.end());
+        if (key.empty() || key == "auto")
+            return;
+        if (std::find(candidates.begin(), candidates.end(), key) == candidates.end())
+            candidates.push_back(key);
+    };
+
+    auto is_hex = [](char ch) {
+        return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
+    };
+
+    if (!variant_key_override_.empty()) {
+        std::string key = variant_key_override_;
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        add_unique(key);
+        if (key.size() == 4 && is_hex(key[0]) && is_hex(key[1]) && is_hex(key[2]) && is_hex(key[3])) {
+            std::string family_key = key.substr(0, 2) + "xx";
+            add_unique(family_key);
+        }
+    }
+
+    add_unique(variant_fallback_key_);
+
+    std::string joined;
+    for (const auto& key : candidates) {
+        if (!joined.empty())
+            joined += ",";
+        joined += key;
+    }
+    ESP_LOGI(TAG, "Manifest variant candidates: %s", joined.empty() ? "<none>" : joined.c_str());
+    return candidates;
 }
 
 bool EFR32Flasher::wait_for_ncp_start_(uint32_t ms) {

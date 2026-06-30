@@ -31,6 +31,7 @@ public:
     void set_stack_version_sensor(esphome::text_sensor::TextSensor* sensor) { stack_version_sensor_ = sensor; }
     void set_manufacturer_sensor(esphome::text_sensor::TextSensor* sensor) { manufacturer_sensor_ = sensor; }
     void set_board_name_sensor(esphome::text_sensor::TextSensor* sensor) { board_name_sensor_ = sensor; }
+    void set_board_config_sensor(esphome::text_sensor::TextSensor* sensor) { board_config_sensor_ = sensor; }
     void set_firmware_sensor(esphome::text_sensor::TextSensor* sensor) { firmware_sensor_ = sensor; }
     void set_ieee_sensor(esphome::text_sensor::TextSensor* sensor) { ieee_sensor_ = sensor; }
     void set_channel_sensor(esphome::text_sensor::TextSensor* sensor) { channel_sensor_ = sensor; }
@@ -69,6 +70,8 @@ private:
     void parse_unsolicited_ezsp_(const std::vector<uint8_t>& ezsp);
     void ack_re_sync_();
     bool parse_token_reply_(const std::vector<uint8_t>& resp, std::string& out);
+    bool parse_mfg_custom_version_reply_(const std::vector<uint8_t>& resp, uint16_t& out);
+    bool apply_mfg_custom_version_(uint16_t raw);
     bool parse_v8_version_reply_(const std::vector<uint8_t>& resp);
 
     static std::string bytes_to_hex_(const std::vector<uint8_t>& data, size_t limit = 32);
@@ -84,6 +87,7 @@ private:
     esphome::text_sensor::TextSensor* stack_version_sensor_{ nullptr };
     esphome::text_sensor::TextSensor* manufacturer_sensor_{ nullptr };
     esphome::text_sensor::TextSensor* board_name_sensor_{ nullptr };
+    esphome::text_sensor::TextSensor* board_config_sensor_{ nullptr };
     esphome::text_sensor::TextSensor* firmware_sensor_{ nullptr };
     esphome::text_sensor::TextSensor* ieee_sensor_{ nullptr };
     esphome::text_sensor::TextSensor* channel_sensor_{ nullptr };
@@ -97,6 +101,7 @@ private:
     std::string last_library_status_;
     std::string last_manufacturer_;
     std::string last_board_name_;
+    std::string last_board_config_;
     std::string last_firmware_;
     std::string last_ieee_;
     std::string last_channel_;

@@ -15,8 +15,8 @@ the ASH/EZSP sequence, then resumes normal traffic.
 * Runs the full ASH handshake (RST → RSTACK) and v4/v8 `getVersion` exchange.
 * Collects EZSP state: IEEE address, stack version, firmware version, EZSP
   protocol version, library status, security/network status (when available).
-* Reads manufacturing tokens such as `MFG_BOARD_NAME` and `MFG_STRING` – used by
-  `efr32_flasher` to pick the correct firmware variant automatically.
+* Reads manufacturing tokens such as `MFG_CUSTOM_VERSION`, `MFG_BOARD_NAME`, and
+  `MFG_STRING`, used by `efr32_flasher` to pick the correct firmware variant.
 * Non-blocking probe loop – heavy work runs from `loop()` and feeds the ESP32
   watchdog.
 * Optional raw ASH logging (`raw_capture: true`) for debugging.
@@ -56,6 +56,8 @@ text_sensor:
   - platform: template
     id: board_name
   - platform: template
+    id: board_config
+  - platform: template
     id: mfg_string
   - platform: template
     id: ezsp_info_status
@@ -71,6 +73,7 @@ efr32_info:
   busy_binary_sensor: ncp_busy
   status_text: ezsp_info_status
   board_name_text: board_name
+  board_config_text: board_config
   manufacturer_text: mfg_string
   ieee_text: ezsp_ieee
   firmware_text: ezsp_firmware
@@ -86,7 +89,12 @@ efr32_info:
 | `busy_binary_sensor`  | `binary_sensor::BinarySensor`| Published `true` while a probe is running.                  |
 | `*_text` sensors      | `text_sensor::TextSensor`    | Optional publishers – pass any combination you care about.  |
 | `status_text`         | `text_sensor::TextSensor`    | Status string (`probing`, `ash-error`, `ok`, …).             |
+| `board_config_text`   | `text_sensor::TextSensor`    | Publishes valid `MFG_CUSTOM_VERSION` as 4 lowercase hex digits, such as `1341`. |
 | `raw_capture`         | `bool` (default `false`)     | Emit RAW ASH frames at VERY_VERBOSE logging level.          |
+
+When `MFG_CUSTOM_VERSION` is valid, `board_name_text` publishes a derived board
+name such as `efr32mg21_768k`. If that token is invalid or erased, the component
+keeps the legacy behavior and publishes the raw `MFG_BOARD_NAME` token instead.
 
 ## Usage
 

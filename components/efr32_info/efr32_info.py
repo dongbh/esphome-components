@@ -22,6 +22,7 @@ CONF_LIBRARY_STATUS_TEXT = "library_status_text"
 CONF_STACK_VERSION_TEXT = "stack_version_text"
 CONF_MANUFACTURER_TEXT = "manufacturer_text"
 CONF_BOARD_NAME_TEXT = "board_name_text"
+CONF_BOARD_CONFIG_TEXT = "board_config_text"
 CONF_FIRMWARE_TEXT = "firmware_text"
 CONF_IEEE_TEXT = "ieee_text"
 CONF_CHANNEL_TEXT = "channel_text"
@@ -53,6 +54,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_STACK_VERSION_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_MANUFACTURER_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_BOARD_NAME_TEXT): cv.use_id(text_sensor.TextSensor),
+        cv.Optional(CONF_BOARD_CONFIG_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_FIRMWARE_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_IEEE_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_CHANNEL_TEXT): cv.use_id(text_sensor.TextSensor),
@@ -117,6 +119,10 @@ async def to_code(config):
     if CONF_BOARD_NAME_TEXT in config:
         sensor = await cg.get_variable(config[CONF_BOARD_NAME_TEXT])
         cg.add(var.set_board_name_sensor(sensor))
+
+    if CONF_BOARD_CONFIG_TEXT in config:
+        sensor = await cg.get_variable(config[CONF_BOARD_CONFIG_TEXT])
+        cg.add(var.set_board_config_sensor(sensor))
 
     if CONF_FIRMWARE_TEXT in config:
         sensor = await cg.get_variable(config[CONF_FIRMWARE_TEXT])

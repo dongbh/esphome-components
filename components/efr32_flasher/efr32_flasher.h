@@ -53,6 +53,7 @@ public:
     void set_ieee_text(esphome::text_sensor::TextSensor* t) { ieee_text_ = t; }
     void set_manuf_id_text(esphome::text_sensor::TextSensor* t) { manuf_id_text_ = t; }
     void set_board_name_text(esphome::text_sensor::TextSensor* t) { board_name_text_ = t; }
+    void set_board_config_text(esphome::text_sensor::TextSensor* t) { board_config_text_ = t; }
     void set_mfg_string_text(esphome::text_sensor::TextSensor* t) { mfg_string_text_ = t; }
     void set_chip_text(esphome::text_sensor::TextSensor* t) { chip_text_ = t; }
     void set_variant(const std::string& v) { variant_fallback_key_ = v; }
@@ -82,6 +83,7 @@ private:
         uint8_t range_pc = 100);
     bool wait_for_ncp_start_(uint32_t ms);
     std::string detect_variant_key_();
+    std::vector<std::string> build_variant_candidates_();
 
     static uint16_t crc16_ccitt_(const uint8_t* data, size_t len) {
         uint16_t crc = 0x0000; // XMODEM variant
@@ -126,6 +128,7 @@ private:
     esphome::text_sensor::TextSensor* ieee_text_{ nullptr };
     esphome::text_sensor::TextSensor* manuf_id_text_{ nullptr };
     esphome::text_sensor::TextSensor* board_name_text_{ nullptr };
+    esphome::text_sensor::TextSensor* board_config_text_{ nullptr };
     esphome::text_sensor::TextSensor* mfg_string_text_{ nullptr };
     esphome::text_sensor::TextSensor* chip_text_{ nullptr };
     esphome::binary_sensor::BinarySensor* busy_sensor_{ nullptr };

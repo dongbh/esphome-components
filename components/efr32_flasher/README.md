@@ -89,6 +89,8 @@ text_sensor:
   - platform: template
     id: board_name
   - platform: template
+    id: board_config
+  - platform: template
     id: mfg_string
   - platform: template
     id: zb_latest_fw
@@ -104,10 +106,11 @@ efr32_flasher:
   busy_binary_sensor: ncp_busy
   show_progress: true
   progress_step: 5
-  variant: zs3lnone     # fallback manifest key if auto-detect fails; use auto for no fallback
+  variant: zs3lnone     # fallback manifest key if detected keys do not match; use auto for no fallback
   baud_rate: 460800      # optional runtime rate; omit to keep UART default
   bootloader_baud_rate: 115200  # optional, defaults to 115200
   board_name_text: board_name
+  board_config_text: board_config
   mfg_string_text: mfg_string
   latest_fw_version_text: zb_latest_fw
   fw_version_text: ezsp_firmware
@@ -123,10 +126,11 @@ efr32_flasher:
 | `pause_switch`           | `switch::Switch` (optional)  | Optional stream-server pause switch (not required).                   |
 | `busy_binary_sensor`     | `binary_sensor::BinarySensor`| Publishes `true` during check/update operations.                      |
 | `url`                    | `string`                     | Manifest URL (HTTPS supported).                                       |
-| `variant`                | `string`                     | Fallback manifest variant key if auto-detect cannot read a board key. Use `auto` for no fallback. |
+| `variant`                | `string`                     | YAML fallback manifest key used when detected keys do not match. Use `auto` for no fallback. |
 | `baud_rate`              | `int` (9600–921600)          | Optional runtime UART speed; leave unset to keep the UART component setting. |
 | `bootloader_baud_rate`   | `int` (9600–921600)          | UART speed used while the bootloader is active (default 115200).      |
 | `board_name_text`        | `text_sensor::TextSensor`    | Optional – feed board name from `efr32_info`.                         |
+| `board_config_text`      | `text_sensor::TextSensor`    | Optional - feed 4-digit `MFG_CUSTOM_VERSION` config from `efr32_info`. |
 | `mfg_string_text`        | `text_sensor::TextSensor`    | Optional – feed manufacturing string from `efr32_info`.               |
 | `latest_fw_version_text` | `text_sensor::TextSensor`    | Publishes manifest version.                                           |
 | `fw_version_text`        | `text_sensor::TextSensor`    | Optional “current firmware” display.                                  |

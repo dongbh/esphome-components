@@ -506,6 +506,67 @@ bool EFR32InfoComponent::parse_token_reply_(const std::vector<uint8_t>& resp, st
     return true;
 }
 
+bool EFR32InfoComponent::parse_mfg_custom_version_reply_(const std::vector<uint8_t>& resp, uint16_t& out) {
+    if (resp.size() < 8)
+        return false;
+
+    size_t pos = 5;
+    uint8_t status = 0x00;
+    if (pos < resp.size() && (resp[pos] == 0x00 || resp[pos] == 0x0D))
+        status = resp[pos++];
+    if (status != 0x00) {
+        ESP_LOGW(TAG, "MFG_CUSTOM_VERSION status=0x%02X resp=%s", static_cast<unsigned>(status),
+            bytes_to_hex_(resp, 24).c_str());
+        return false;
+    }
+    if (pos >= resp.size())
+        return false;
+
+    uint8_t length = resp[pos++];
+    if (length < 2 || pos + 2 > resp.size())
+        return false;
+
+    bool all_ff = true;
+    for (size_t i = pos; i < resp.size() && i < pos + length; i++) {
+        if (resp[i] != 0xFF) {
+            all_ff = false;
+            break;
+        }
+    }
+    if (all_ff)
+        return false;
+
+    out = static_cast<uint16_t>(resp[pos]) | (static_cast<uint16_t>(resp[pos + 1]) << 8);
+    return true;
+}
+
+bool EFR32InfoComponent::apply_mfg_custom_version_(uint16_t raw) {
+    if (raw == 0x0000 || raw == 0xFFFF)
+        return false;
+
+    uint8_t chip = (raw >> 12) & 0x0F;
+    uint8_t flash = (raw >> 8) & 0x0F;
+    uint8_t baud = (raw >> 4) & 0x0F;
+    uint8_t flow = raw & 0x0F;
+    if (chip < 1 || chip > 4 || flash < 1 || flash > 8 || baud < 1 || baud > 8 || flow > 1)
+        return false;
+
+    const char* chips[] = { "", "mg21", "mg22", "mg23", "mg24" };
+    char config[8];
+    std::snprintf(config, sizeof(config), "%04x", static_cast<unsigned>(raw));
+    last_board_config_ = config;
+    publish_text_(board_config_sensor_, last_board_config_);
+
+    char board[32];
+    std::snprintf(board, sizeof(board), "efr32%s_%uk", chips[chip], static_cast<unsigned>(flash) * 256U);
+    last_board_name_ = board;
+    publish_text_(board_name_sensor_, last_board_name_);
+
+    ESP_LOGI(TAG, "MFG_CUSTOM_VERSION=0x%04X board_config='%s' board_name='%s'",
+        static_cast<unsigned>(raw), last_board_config_.c_str(), last_board_name_.c_str());
+    return true;
+}
+
 bool EFR32InfoComponent::parse_v8_version_reply_(const std::vector<uint8_t>& resp) {
     if (resp.size() < 7) {
         ESP_LOGW(TAG, "VERSION(min) reply too short resp=%s", bytes_to_hex_(resp, 24).c_str());
@@ -1237,8 +1298,35 @@ void EFR32InfoComponent::run_probe_() {
 
     if (handle_token(0x01, last_manufacturer_, manufacturer_sensor_))
         tokens_ok = true;
-    if (handle_token(0x02, last_board_name_, board_name_sensor_))
+
+    std::string board_name_token;
+    bool board_name_ok = false;
+    if (handle_token(0x02, board_name_token, nullptr)) {
+        board_name_ok = true;
         tokens_ok = true;
+    }
+
+    bool custom_version_ok = false;
+    {
+        std::vector<uint8_t> resp;
+        uint16_t raw = 0;
+        if (send_expect_seq(0x000B, { 0x00 }, 1000, resp) && parse_mfg_custom_version_reply_(resp, raw)) {
+            custom_version_ok = apply_mfg_custom_version_(raw);
+            if (custom_version_ok)
+                tokens_ok = true;
+        }
+        if (!custom_version_ok) {
+            last_board_config_.clear();
+            publish_text_(board_config_sensor_, last_board_config_);
+            if (board_name_ok) {
+                last_board_name_ = board_name_token;
+                publish_text_(board_name_sensor_, last_board_name_);
+                ESP_LOGI(TAG, "Using MFG_BOARD_NAME token '%s'", last_board_name_.c_str());
+            } else {
+                ESP_LOGW(TAG, "MFG_CUSTOM_VERSION invalid and MFG_BOARD_NAME unavailable");
+            }
+        }
+    }
 
     {
         std::vector<uint8_t> resp;
