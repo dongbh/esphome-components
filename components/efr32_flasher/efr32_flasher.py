@@ -86,8 +86,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PROGRESS_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_UART_HW_FLOW_ID): _maybe_uart_hw_flow_use_id,
         cv.Optional(CONF_STREAM_SERVER_ID): _maybe_stream_server_use_id,
-        # variant: auto | MGM24 | BM24 (case-insensitive)
-        cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "mgm24", "bm24", lower=True),
+        # auto probes board_name_text first. Any other value is used as the manifest
+        # variant fallback if probing does not return a key.
+        cv.Optional(CONF_VARIANT, default="auto"): cv.string_strict,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -185,9 +186,7 @@ async def to_code(config):
         cg.add(var.set_chip_text(t))
 
     if CONF_VARIANT in config:
-        v = config[CONF_VARIANT]
-        m = {"auto": 0, "mgm24": 1, "bm24": 2}
-        cg.add(var.set_variant(m.get(v, 0)))
+        cg.add(var.set_variant(config[CONF_VARIANT]))
     if CONF_PAUSE_SWITCH in config:
         ps = await cg.get_variable(config[CONF_PAUSE_SWITCH])
         cg.add(var.set_pause_switch(ps))

@@ -55,7 +55,7 @@ public:
     void set_board_name_text(esphome::text_sensor::TextSensor* t) { board_name_text_ = t; }
     void set_mfg_string_text(esphome::text_sensor::TextSensor* t) { mfg_string_text_ = t; }
     void set_chip_text(esphome::text_sensor::TextSensor* t) { chip_text_ = t; }
-    void set_variant(uint8_t v) { variant_force_ = v; } // 0=auto,1=MGM24,2=BM24
+    void set_variant(const std::string& v) { variant_fallback_key_ = v; }
     void set_busy_sensor(esphome::binary_sensor::BinarySensor* b) { busy_sensor_ = b; }
     void set_progress_sensor(esphome::sensor::Sensor* s) { progress_sensor_ = s; }
 
@@ -142,7 +142,7 @@ private:
     std::string manifest_version_{};
     std::string expected_md5_{};
     uint32_t expected_size_{ 0 };
-    uint8_t variant_force_{ 0 };
+    std::string variant_fallback_key_{ "auto" };
     std::string variant_key_override_{};
 };
 

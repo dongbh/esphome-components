@@ -150,7 +150,6 @@ static constexpr uint8_t NAK = 0x15;
 static constexpr uint8_t CAN = 0x18;
 static constexpr uint8_t CCHR = 'C';
 static constexpr const char* EFR32_FW_PARTITION_LABEL = "efr32_fw";
-static constexpr const char* TEMP_DEFAULT_VARIANT_KEY = "zs3lnone";
 
 EFR32Flasher::~EFR32Flasher() {}
 
@@ -414,12 +413,6 @@ bool EFR32Flasher::fetch_manifest_(const std::string& url, std::string& fw_url_o
     if (doc["variants"].is<JsonObjectConst>()) {
         auto obj = doc["variants"].as<JsonObjectConst>();
         std::string key = variant_key_override_;
-//        if (!variant_key_override_.empty())
-//            key = variant_key_override_;
-//        else if (variant_force_ == 1)
-//            key = "MGM24";
-//        else if (variant_force_ == 2)
-//            key = "BM24";
 
         if (!key.empty()) {
             auto v = obj[key.c_str()];
@@ -798,7 +791,7 @@ void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t&
 
 void EFR32Flasher::run_update_() {
     apply_runtime_baud_();
-    ESP_LOGI(TAG, "run_update start variant_force=%u override='%s'", static_cast<unsigned>(variant_force_),
+    ESP_LOGI(TAG, "run_update start variant_fallback='%s' override='%s'", variant_fallback_key_.c_str(),
         variant_key_override_.c_str());
     if (!uart_ || !bl_sw_ || !rst_sw_) {
         ESP_LOGE(TAG, "Not configured (uart/switches)");
@@ -808,12 +801,14 @@ void EFR32Flasher::run_update_() {
         return;
     }
     variant_key_override_.clear();
-    if (variant_force_ == 0) {
-        variant_key_override_ = detect_variant_key_();
-        if (variant_key_override_.empty()) {
-            variant_key_override_ = TEMP_DEFAULT_VARIANT_KEY;
-            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using temporary default '%s'",
-                TEMP_DEFAULT_VARIANT_KEY);
+    variant_key_override_ = detect_variant_key_();
+    if (variant_key_override_.empty()) {
+        if (!variant_fallback_key_.empty() && variant_fallback_key_ != "auto") {
+            variant_key_override_ = variant_fallback_key_;
+            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using configured fallback '%s'",
+                variant_key_override_.c_str());
+        } else {
+            ESP_LOGW(TAG, "Auto variant detection did not yield a match and no fallback variant is configured");
         }
     }
     ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
@@ -914,16 +909,20 @@ void EFR32Flasher::run_check_update_() {
         ESP_LOGW(TAG, "Custom firmware URL configured; skipping manifest update check.");
         return;
     }
-    if (variant_force_ == 0 && variant_key_override_.empty()) {
+    if (variant_key_override_.empty()) {
         variant_key_override_ = detect_variant_key_();
         if (variant_key_override_.empty()) {
-            variant_key_override_ = TEMP_DEFAULT_VARIANT_KEY;
-            ESP_LOGW(TAG, "Auto variant detection did not yield a match; using temporary default '%s'",
-                TEMP_DEFAULT_VARIANT_KEY);
+            if (!variant_fallback_key_.empty() && variant_fallback_key_ != "auto") {
+                variant_key_override_ = variant_fallback_key_;
+                ESP_LOGW(TAG, "Auto variant detection did not yield a match; using configured fallback '%s'",
+                    variant_key_override_.c_str());
+            } else {
+                ESP_LOGW(TAG, "Auto variant detection did not yield a match and no fallback variant is configured");
+            }
         }
     }
-    ESP_LOGD(TAG, "run_check_update variant override='%s' force=%u", variant_key_override_.c_str(),
-        static_cast<unsigned>(variant_force_));
+    ESP_LOGD(TAG, "run_check_update variant override='%s' fallback='%s'", variant_key_override_.c_str(),
+        variant_fallback_key_.c_str());
     std::string fw_url;
     if (!fetch_manifest_(manifest_url_, fw_url)) {
         ESP_LOGE(TAG, "Manifest fetch/parse failed"); return;

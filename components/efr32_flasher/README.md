@@ -104,7 +104,7 @@ efr32_flasher:
   busy_binary_sensor: ncp_busy
   show_progress: true
   progress_step: 5
-  variant: auto          # auto | bm24 | mgm24
+  variant: zs3lnone     # fallback manifest key if auto-detect fails; use auto for no fallback
   baud_rate: 460800      # optional runtime rate; omit to keep UART default
   bootloader_baud_rate: 115200  # optional, defaults to 115200
   board_name_text: board_name
@@ -123,7 +123,7 @@ efr32_flasher:
 | `pause_switch`           | `switch::Switch` (optional)  | Optional stream-server pause switch (not required).                   |
 | `busy_binary_sensor`     | `binary_sensor::BinarySensor`| Publishes `true` during check/update operations.                      |
 | `url`                    | `string`                     | Manifest URL (HTTPS supported).                                       |
-| `variant`                | `auto`/`bm24`/`mgm24`        | Override variant. `auto` uses `board_name_text`/`mfg_string_text`.    |
+| `variant`                | `string`                     | Fallback manifest variant key if auto-detect cannot read a board key. Use `auto` for no fallback. |
 | `baud_rate`              | `int` (9600–921600)          | Optional runtime UART speed; leave unset to keep the UART component setting. |
 | `bootloader_baud_rate`   | `int` (9600–921600)          | UART speed used while the bootloader is active (default 115200).      |
 | `board_name_text`        | `text_sensor::TextSensor`    | Optional – feed board name from `efr32_info`.                         |
@@ -176,8 +176,8 @@ script:
 ## Troubleshooting
 
 * **Variant auto-detect fails:** ensure `board_name_text` / `mfg_string_text`
-  sensors are hooked up and that `efr32_info` successfully publishes tokens. Use
-  DEBUG logging to see the normalized values.
+  sensors are hooked up and that `efr32_info` successfully publishes tokens. Set
+  `variant` to a manifest key such as `zs3lnone` to use that key as a fallback.
 * **Manifest fetch errors:** check network connectivity and that the manifest URL
   returns HTTP 200. The component currently follows up to five redirects.
 * **Bootloader doesn’t start:** verify the GPIO wiring (RST/BSL) and the required
